@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Merge hotel spreadsheets locally and download an auditable review workbook.">
+  <title>Hotel workbook merger</title>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #172033;
+      background: #f3f6fa;
+      font-synthesis: none;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; }
+    main { width: min(760px, calc(100% - 32px)); margin: 56px auto; }
+    .card {
+      padding: clamp(24px, 5vw, 44px);
+      border: 1px solid #dce3ec;
+      border-radius: 18px;
+      background: #fff;
+      box-shadow: 0 16px 44px rgb(34 50 75 / 8%);
+    }
+    .eyebrow { color: #245c98; font-size: .78rem; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
+    h1 { margin: 10px 0 10px; font-size: clamp(1.8rem, 5vw, 2.45rem); letter-spacing: -.04em; }
+    .intro, .privacy, .help { color: #596579; line-height: 1.6; }
+    .files { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 28px 0 18px; }
+    label { display: grid; gap: 9px; font-size: .92rem; font-weight: 650; }
+    input[type="file"] { width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 10px; background: #fbfcfe; font-size: .85rem; }
+    button {
+      width: 100%; min-height: 48px; border: 0; border-radius: 10px;
+      background: #245c98; color: #fff; font: inherit; font-weight: 700; cursor: pointer;
+    }
+    button:disabled { background: #9aa8b8; cursor: not-allowed; }
+    .privacy { margin: 16px 0 0; font-size: .86rem; }
+    .legend { display: flex; flex-wrap: wrap; gap: 12px 20px; margin: 22px 0 0; padding-top: 20px; border-top: 1px solid #e6ebf1; font-size: .85rem; }
+    .legend span { display: inline-flex; align-items: center; gap: 8px; }
+    .swatch { width: 14px; height: 14px; border-radius: 4px; background: #fce4d6; border: 1px solid #e8b59f; }
+    .swatch.yellow { background: #fff2cc; border-color: #e6d389; }
+    .swatch.red { background: #f4cccc; border-color: #df9d9d; }
+    #status { min-height: 24px; margin: 16px 0 0; color: #245c45; font-size: .92rem; line-height: 1.5; }
+    #status.error { color: #a62d2d; }
+    .help { margin: 22px 0 0; font-size: .9rem; }
+    @media (max-width: 580px) { main { margin: 24px auto; } .files { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="card" aria-labelledby="page-title">
+      <div class="eyebrow">Private, browser-based tool</div>
+      <h1 id="page-title">Hotel workbook merger</h1>
+      <p class="intro">Choose two .xlsx files to create one merged workbook with the original sheets, matched records, and a reviewer checklist.</p>
+
+      <div class="files">
+        <label for="file-a">First hotel workbook
+          <input id="file-a" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+        </label>
+        <label for="file-b">Second hotel workbook
+          <input id="file-b" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+        </label>
+      </div>
+      <button id="merge" type="button" disabled>Create review workbook</button>
+      <p class="privacy">Your files are processed in this browser and are not uploaded to a server. Keep the downloaded workbook as the review copy.</p>
+      <p id="status" role="status" aria-live="polite"></p>
+
+      <div class="legend" aria-label="Workbook color legend">
+        <span><i class="swatch"></i>Automatically merged — review</span>
+        <span><i class="swatch yellow"></i>Possible match — not merged</span>
+        <span><i class="swatch red"></i>Conflicting source values</span>
+      </div>
+      <p class="help">Exact normalized names and strong supporting evidence are merged. Similar names without location confirmation stay separate and are highlighted as possible matches.</p>
+    </section>
+  </main>
+
+  <script>
+    (() => {
+      const inputs = [document.querySelector("#file-a"), document.querySelector("#file-b")];
+      const button = document.querySelector("#merge");
+      const status = document.querySelector("#status");
+      const orange = { fill: { fgColor: { rgb: "FCE4D6" } } };
+      const yellow = { fill: { fgColor: { rgb: "FFF2CC" } } };
+      const red = { fill: { fgColor: { rgb: "F4CCCC" } } };
+      const headerStyle = {
+        fill: { fgColor: { rgb: "1F4E78" } },
+        font: { color: { rgb: "FFFFFF" }, bold: true },
+        alignment: { wrapText: true, vertical: "center" }
+      };
+      const nameHeaders = new Set(["name", "hotel", "hotelname", "propertyname"]);
+      const ratingHeaders = new Set(["rating", "stars", "hotelrating", "googlestars"]);
+      const emailHeaders = new Set(["email", "emailaddress", "emailadress"]);
+      const genericNameTokens = new Set([
+        "a", "an", "and", "athens", "by", "city", "hotel", "hotels", "in", "of",
+        "the"
+      ]);
+
+      const normalize = value => String(value ?? "")
+        .normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase().replace(/[^a-z0-9]/g, "");
+      const tokens = value => new Set(
+        String(value ?? "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+          .toLowerCase().match(/[a-z0-9]+/g) || []
+      );
+      const meaningfulTokens = value =>
+        new Set([...tokens(value)].filter(token => !genericNameTokens.has(token)));
+      function similarity(left, right) {
+        const a = normalize(left), b = normalize(right);
+        let previous = Array(b.length + 1).fill(0);
+        for (let i = 1; i <= a.length; i++) {
+          const current = [0];
+          for (let j = 1; j <= b.length; j++) {
+            current[j] = a[i - 1] === b[j - 1]
+              ? previous[j - 1] + 1
+              : Math.max(previous[j], current[j - 1]);
+          }
+          previous = current;
+        }
+        const sequence = a.length + b.length
+          ? (2 * previous[b.length]) / (a.length + b.length) : 1;
+        const ta = tokens(left), tb = tokens(right);
+        const union = new Set([...ta, ...tb]);
+        const tokenScore = union.size
+          ? [...ta].filter(token => tb.has(token)).length / union.size : 0;
+        return Math.max(sequence, tokenScore);
+      }
+      const nonEmpty = value => value !== null && value !== undefined && value !== "";
+      const unique = values => {
+        const result = [];
+        const seen = new Set();
+        for (const value of values) {
+          if (!nonEmpty(value)) continue;
+          const key = `${typeof value}:${String(value)}`;
+          if (!seen.has(key)) { seen.add(key); result.push(value); }
+        }
+        return result;
+      };
+      const isHeader = row => {
+        const first = normalize(row[0]);
+        const rest = new Set(row.slice(1).filter(nonEmpty).map(normalize));
+        return nameHeaders.has(first) &&
+          [...rest].some(value => ratingHeaders.has(value) || emailHeaders.has(value));
+      };
+      function getCoordinates(fields) {
+        let lat, lon;
+        for (const [key, value] of Object.entries(fields)) {
+          const header = normalize(key);
+          if (["latitude", "lat"].includes(header)) lat = Number(value);
+          if (["longitude", "lon", "lng"].includes(header)) lon = Number(value);
+        }
+        return Number.isFinite(lat) && Number.isFinite(lon) &&
+          lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180 ? [lat, lon] : null;
+      }
+      function meters(a, b) {
+        const rad = value => value * Math.PI / 180;
+        const [lat1, lon1] = a.map(rad), [lat2, lon2] = b.map(rad);
+        const haversine = Math.sin((lat2 - lat1) / 2) ** 2 +
+          Math.cos(lat1) * Math.cos(lat2) * Math.sin((lon2 - lon1) / 2) ** 2;
+        return 6371000 * 2 * Math.asin(Math.sqrt(haversine));
+      }
+      function safeTitle(value, used) {
+        const base = String(value).replace(/[\[\]:*?/\\]/g, "-").slice(0, 31) || "Source";
+        let title = base, index = 2;
+        while (used.has(title)) {
+          const suffix = ` (${index++})`;
+          title = `${base.slice(0, 31 - suffix.length)}${suffix}`;
+        }
+        used.add(title);
+        return title;
+      }
+      function addWorksheet(book, title, rows, used, fillRows = new Map(), conflictCells = []) {
+        const sheetName = safeTitle(title, used);
+        const worksheet = XLSX.utils.aoa_to_sheet(rows);
+        const columns = Math.max(...rows.map(row => row.length), 1);
+        for (let column = 0; column < columns; column++) {
+          const cell = worksheet[XLSX.utils.encode_cell({ r: 0, c: column })];
+          if (cell) cell.s = headerStyle;
+        }
+        for (const [rowNumber, fill] of fillRows) {
+          for (let column = 0; column < columns; column++) {
+            const cell = worksheet[XLSX.utils.encode_cell({ r: rowNumber, c: column })];
+            if (cell) cell.s = fill;
+          }
+        }
+        for (const [rowNumber, column] of conflictCells) {
+          const cell = worksheet[XLSX.utils.encode_cell({ r: rowNumber, c: column })];
+          if (cell) cell.s = red;
+        }
+        worksheet["!freeze"] = { xSplit: 0, ySplit: 1 };
+        worksheet["!autofilter"] = { ref: XLSX.utils.encode_range({
+          s: { r: 0, c: 0 }, e: { r: Math.max(rows.length - 1, 0), c: columns - 1 }
+        }) };
+        worksheet["!cols"] = Array.from({ length: columns }, (_, column) => {
+          const width = Math.max(12, ...rows.map(row => String(row[column] ?? "").length + 2));
+          return { wch: Math.min(width, 55) };
+        });
+        XLSX.utils.book_append_sheet(book, worksheet, sheetName);
+        return sheetName;
+      }
+      function getMatch(left, right) {
+        const score = similarity(left.name, right.name);
+        const sameName = normalize(left.name) === normalize(right.name);
+        const sharedEmail = [...left.emails].some(value => right.emails.has(value));
+        const sameAddress = left.address && right.address &&
+          normalize(left.address) === normalize(right.address);
+        const distance = left.coordinates && right.coordinates
+          ? meters(left.coordinates, right.coordinates) : null;
+        const nearby = distance !== null && distance <= 30;
+        const differentAddresses = left.address && right.address && !sameAddress;
+        const differentCoordinates = distance !== null && !nearby;
+        const locationConflict = (differentAddresses || differentCoordinates) &&
+          !sameAddress && !nearby;
+        if (locationConflict && (sameName || sharedEmail || score >= 0.88))
+          return ["POTENTIAL MATCH - REVIEW", "Location fields disagree; keep separate pending reviewer confirmation", score];
+        if (locationConflict) return null;
+        if (sameName) return ["MERGED - REVIEW", "Exact normalized hotel name", score];
+        if (sharedEmail && score >= 0.86) {
+          const leftCore = meaningfulTokens(left.name), rightCore = meaningfulTokens(right.name);
+          const sameCore = leftCore.size === rightCore.size &&
+            [...leftCore].every(token => rightCore.has(token));
+          if (sameAddress || nearby || sameCore)
+            return ["MERGED - REVIEW", "Shared email, similar name, and no conflicting location", score];
+          return ["POTENTIAL MATCH - REVIEW", "Shared email/name similarity without location confirmation", score];
+        }
+        if (sameAddress && score >= 0.70)
+          return ["MERGED - REVIEW", "Same address and similar name", score];
+        if (nearby && score >= 0.86)
+          return ["MERGED - REVIEW", "Coordinates within 30 m and highly similar name", score];
+        if (sharedEmail) return ["POTENTIAL MATCH - REVIEW", "Shared email; confirm property identity", score];
+        if (sameAddress) return ["POTENTIAL MATCH - REVIEW", "Same address; confirm property identity", score];
+        if (nearby) return ["POTENTIAL MATCH - REVIEW", "Coordinates within 30 m; confirm property identity", score];
+        const leftCore = meaningfulTokens(left.name), rightCore = meaningfulTokens(right.name);
+        if (left.sourceNumber !== right.sourceNumber && score >= 0.88 &&
+            [...leftCore].some(token => rightCore.has(token)))
+          return ["POTENTIAL MATCH - REVIEW", `Similar hotel name (${Math.round(score * 100)}%); verify location`, score];
+        return null;
+      }
+      function reference(record) {
+        return `${record.file} / ${record.sheet} / row ${record.row}`;
+      }
+      async function parseInput(file, sourceNumber) {
+        const book = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
+        const sheets = [];
+        const records = [];
+        for (const sheetName of book.SheetNames) {
+          const rows = XLSX.utils.sheet_to_json(book.Sheets[sheetName], {
+            header: 1, raw: true, defval: null, blankrows: true
+          });
+          sheets.push({ name: sheetName, rows });
+          let headerIndex = rows.findIndex(isHeader);
+          const maxColumns = Math.max(0, ...rows.map(row => row.length));
+          let headers;
+          if (headerIndex < 0) {
+            headerIndex = -1;
+            headers = ["name", "rating", "email"];
+            while (headers.length < maxColumns) headers.push(`field_${headers.length + 1}`);
+          } else {
+            headers = rows[headerIndex].map(value => String(value ?? ""));
+            while (headers.length < maxColumns) headers.push(`column_${headers.length + 1}`);
+          }
+          rows.forEach((row, rowIndex) => {
+            if (rowIndex === headerIndex || isHeader(row)) return;
+            const values = [...row];
+            while (values.length < headers.length) values.push(null);
+            const fields = Object.fromEntries(headers.map((header, index) => [
+              header || `column_${index + 1}`, values[index]
+            ]));
+            const nameKey = Object.keys(fields).find(key => nameHeaders.has(normalize(key)));
+            const name = nameKey ? fields[nameKey] : null;
+            if (!nonEmpty(name) || !values.slice(1).some(nonEmpty)) return;
+            const emails = new Set(Object.entries(fields)
+              .filter(([key, value]) => normalize(key).includes("email") &&
+                nonEmpty(value) && String(value).includes("@"))
+              .map(([, value]) => normalize(value)).filter(Boolean));
+            const addressKey = Object.keys(fields).find(key =>
+              ["address", "hoteladdress"].includes(normalize(key)));
+            records.push({
+              sourceNumber, file: file.name, sheet: sheetName, row: rowIndex + 1,
+              fields, name, emails,
+              address: addressKey ? fields[addressKey] : null,
+              coordinates: getCoordinates(fields)
+            });
+          });
+        }
+        return { sourceNumber, file, sheets, records };
+      }
+      async function createWorkbook() {
+        if (!window.XLSX) throw new Error("The spreadsheet library could not be loaded. Check your internet connection and reload.");
+        const sources = await Promise.all(inputs.map((input, index) => parseInput(input.files[0], index + 1)));
+        const records = sources.flatMap(source => source.records);
+        if (!records.length) throw new Error("No hotel rows were found in the selected files.");
+        const links = [];
+        const parents = records.map((_, index) => index);
+        const find = index => parents[index] === index ? index : (parents[index] = find(parents[index]));
+        const union = (left, right) => { parents[find(right)] = find(left); };
+        for (let left = 0; left < records.length; left++) {
+          for (let right = left + 1; right < records.length; right++) {
+            const match = getMatch(records[left], records[right]);
+            if (!match) continue;
+            const [reviewStatus, reason, score] = match;
+            if (reviewStatus === "MERGED - REVIEW") union(left, right);
+            links.push({ left, right, status: reviewStatus, reason, score });
+          }
+        }
+        const groups = new Map();
+        records.forEach((_, index) => {
+          const root = find(index);
+          if (!groups.has(root)) groups.set(root, []);
+          groups.get(root).push(index);
+        });
+        const orderedGroups = [...groups.values()].sort((a, b) => a[0] - b[0]);
+        const duplicateRows = new Map(), candidateRows = new Map();
+        for (const link of links) for (const index of [link.left, link.right]) {
+          const record = records[index];
+          const key = `${record.sourceNumber}\u0000${record.sheet}`;
+          if (link.status === "MERGED - REVIEW") {
+            if (!duplicateRows.has(key)) duplicateRows.set(key, new Set());
+            duplicateRows.get(key).add(record.row - 1);
+          } else {
+            if (!candidateRows.has(key)) candidateRows.set(key, new Set());
+            candidateRows.get(key).add(record.row - 1);
+          }
+        }
+        const output = XLSX.utils.book_new();
+        const used = new Set();
+        const sourceNames = new Map();
+        for (const source of sources) {
+          for (const sheet of source.sheets) {
+            const key = `${source.sourceNumber}\u0000${sheet.name}`;
+            const duplicateRowsForSheet = duplicateRows.get(key) || new Set();
+            const candidateRowsForSheet = [...(candidateRows.get(key) || [])]
+              .filter(row => !duplicateRowsForSheet.has(row));
+            const title = addWorksheet(
+              output, `Source ${source.sourceNumber} - ${source.file.name} - ${sheet.name}`,
+              sheet.rows, used, new Map([
+                ...[...duplicateRowsForSheet].map(row => [row, orange]),
+                ...candidateRowsForSheet.map(row => [row, yellow])
+              ])
+            );
+            sourceNames.set(key, title);
+          }
+        }
+        const sourceHeaders = [];
+        for (const record of records) for (const field of Object.keys(record.fields)) {
+          const key = `${record.sourceNumber}\u0000${record.sheet}\u0000${field}`;
+          if (!sourceHeaders.some(entry => entry.key === key))
+            sourceHeaders.push({ key, sourceNumber: record.sourceNumber, sheet: record.sheet, field });
+        }
+        const mergedRows = [[
+          "Hotel name (merged)", "Merge status", "Source record count", "Source workbooks",
+          "Match evidence", "Source references",
+          ...sourceHeaders.map(entry =>
+            `${sourceNames.get(`${entry.sourceNumber}\u0000${entry.sheet}`)} / ${entry.field}`)
+        ]];
+        const conflicts = [];
+        for (const group of orderedGroups) {
+          const groupRecords = group.map(index => records[index]);
+          const reasons = unique(links.filter(link =>
+            link.status === "MERGED - REVIEW" && group.includes(link.left) && group.includes(link.right)
+          ).map(link => link.reason));
+          const row = [
+            unique(groupRecords.map(record => record.name)).join(" | "),
+            groupRecords.length > 1 ? "MERGED - REVIEW" : "SINGLE RECORD",
+            groupRecords.length,
+            unique(groupRecords.map(record => record.file)).join(" | "),
+            reasons.join(" | "),
+            groupRecords.map(reference).join(" | ")
+          ];
+          sourceHeaders.forEach((entry, fieldIndex) => {
+            const values = unique(groupRecords
+              .filter(record => record.sourceNumber === entry.sourceNumber && record.sheet === entry.sheet)
+              .map(record => record.fields[entry.field]));
+            if (values.length > 1) conflicts.push([mergedRows.length, fieldIndex + 6]);
+            row.push(values.length > 1 ? values.map(String).join(" | ") : (values[0] ?? null));
+          });
+          mergedRows.push(row);
+        }
+        const mergedFillRows = new Map(
+          orderedGroups.flatMap((group, index) =>
+            group.length > 1 ? [[index + 1, orange]] : [])
+        );
+        addWorksheet(output, "Merged Hotels", mergedRows, used, mergedFillRows, conflicts);
+
+        const reviewRows = [[
+          "Review status", "Evidence / reason", "Name similarity", "Hotel name (input A)",
+          "Source reference (input A)", "Hotel name (input B)", "Source reference (input B)",
+          "Reviewer decision", "Reviewer notes"
+        ]];
+        const reviewFills = new Map();
+        links.forEach((link, index) => {
+          const left = records[link.left], right = records[link.right];
+          reviewRows.push([
+            link.status, link.reason, Number(link.score.toFixed(3)), left.name, reference(left),
+            right.name, reference(right), null, null
+          ]);
+          reviewFills.set(index + 1, link.status === "MERGED - REVIEW" ? orange : yellow);
+        });
+        addWorksheet(output, "Match Review", reviewRows, used, reviewFills);
+
+        const unassigned = [["Source", "Sheet", "Row", "Raw non-empty values"]];
+        for (const source of sources) for (const sheet of source.sheets) {
+          const headerIndex = sheet.rows.findIndex(isHeader);
+          sheet.rows.forEach((row, index) => {
+            if (!row.some(nonEmpty) || index === headerIndex || isHeader(row)) return;
+            if (source.records.some(record => record.sheet === sheet.name && record.row === index + 1)) return;
+            unassigned.push([
+              source.file.name, sheet.name, index + 1,
+              JSON.stringify(Object.fromEntries(row.map((value, i) => [String(i + 1), value]).filter(([, value]) => nonEmpty(value))))
+            ]);
+          });
+        }
+        addWorksheet(output, "Unassigned Rows", unassigned, used);
+        const mergedCount = orderedGroups.filter(group => group.length > 1).length;
+        const singleCount = orderedGroups.length - mergedCount;
+        const potentialCount = links.filter(link => link.status === "POTENTIAL MATCH - REVIEW").length;
+        const readme = [
+          ["Hotel workbook merge - reviewer guide"],
+          ["Original workbook sheets are copied to Source tabs; source values are not removed."],
+          ["Merged Hotels lists exact-name/strong-evidence groups plus all single-source records."],
+          ["Orange rows are merged groups or exact/high-confidence duplicate links; review their source references."],
+          ["Yellow rows in Match Review are possible variants only. They are NOT automatically merged."],
+          ["Red cells in Merged Hotels indicate differing values within that source field; all raw values remain on Source tabs."],
+          ["Location matching uses identical normalized addresses or coordinates within 30 m plus a similar name."],
+          ["Name-only variants without location confirmation remain separate review candidates."],
+          ["Blank-name rows and category/header rows are retained in Source tabs; non-header unassigned rows are listed separately."],
+          ["Merged rows combine distinct values only for display. Inspect the source references/tabs before accepting any merge."],
+          ["Input records processed", records.length],
+          ["Merged groups", mergedCount],
+          ["Single records", singleCount],
+          ["Potential matches", potentialCount]
+        ];
+        addWorksheet(output, "Read Me", readme, used);
+        XLSX.writeFile(output, "Merged_Hotels_Review.xlsx", { bookType: "xlsx", cellStyles: true });
+        status.classList.remove("error");
+        status.textContent = `Downloaded Merged_Hotels_Review.xlsx — ${records.length} records, ${mergedCount} merged groups, ${potentialCount} possible matches to review.`;
+      }
+      function updateButton() {
+        button.disabled = !inputs.every(input => input.files && input.files.length === 1);
+      }
+      function resetStatus() {
+        status.textContent = "";
+        status.classList.remove("error");
+      }
+      inputs.forEach(input => input.addEventListener("change", () => {
+        updateButton();
+        resetStatus();
+      }));
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        button.textContent = "Creating workbook…";
+        status.textContent = "Reading and matching records locally…";
+        try {
+          await createWorkbook();
+        } catch (error) {
+          status.classList.add("error");
+          status.textContent = error instanceof Error ? error.message : String(error);
+        } finally {
+          button.textContent = "Create review workbook";
+          updateButton();
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
