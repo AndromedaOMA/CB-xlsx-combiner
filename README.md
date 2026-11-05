@@ -36,8 +36,12 @@ Install the dependency and run the script with the two input files:
 
 ```powershell
 python -m pip install -r requirements.txt
-python main.py "Athens.xlsx" "Athens (1).xlsx" -o "Merged_Hotels_Review.xlsx"
+python main.py "Athens.xlsx" "Athens (1).xlsx"
 ```
+
+The browser and Python script save the result as `<first input name>_merged.xlsx`.
+For example, `Athens.xlsx` or `Athens (1).xlsx` produces `Athens_merged.xlsx`.
+Use `-o "Custom_name.xlsx"` to choose a different name in the Python script.
 
 The workbook contains:
 

@@ -328,6 +328,10 @@
       function reference(record) {
         return `Input ${record.sourceNumber} / ${record.file} / ${record.sheet} / row ${record.row}`;
       }
+      function mergedFilename(fileName) {
+        const name = fileName.replace(/\.xlsx$/i, "").replace(/\s*\(\d+\)$/, "").trim() || "Hotels";
+        return `${name}_merged.xlsx`;
+      }
       async function parseInput(file, sourceNumber) {
         const book = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
         const sheets = [];
@@ -537,9 +541,10 @@
         ];
         addWorksheet(output, "Read Me", readme, used);
         output.SheetNames = ["Merged Hotels", ...output.SheetNames.filter(name => name !== "Merged Hotels")];
-        XLSX.writeFile(output, "Merged_Hotels_Review.xlsx", { bookType: "xlsx", cellStyles: true });
+        const outputFilename = mergedFilename(sources[0].file.name);
+        XLSX.writeFile(output, outputFilename, { bookType: "xlsx", cellStyles: true });
         status.classList.remove("error");
-        status.textContent = `Downloaded Merged_Hotels_Review.xlsx — ${records.length} records, ${mergedCount} merged groups, ${potentialCount} possible matches to review.`;
+        status.textContent = `Downloaded ${outputFilename} — ${records.length} records, ${mergedCount} merged groups, ${potentialCount} possible matches to review.`;
       }
       function updateButton() {
         button.disabled = !inputs.every(input => input.files && input.files.length === 1);

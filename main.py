@@ -667,6 +667,12 @@ def merge_workbooks(input_paths: list[Path], output_path: Path) -> dict[str, int
     }
 
 
+def merged_filename(input_path: Path) -> str:
+    """Use the first input's name, without a downloaded-copy suffix like ' (1)'."""
+    name = re.sub(r"\s*\(\d+\)$", "", input_path.stem).strip() or "Hotels"
+    return f"{name}_merged.xlsx"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -679,12 +685,14 @@ def main() -> None:
         "-o",
         "--output",
         type=Path,
-        default=Path("Merged_Hotels_Review.xlsx"),
-        help="output review workbook",
+        help="output workbook (defaults to <first input name>_merged.xlsx)",
     )
     args = parser.parse_args()
     input_paths = args.inputs or sorted(
-        path for path in Path.cwd().glob("*.xlsx") if path.resolve() != args.output.resolve()
+        path for path in Path.cwd().glob("*.xlsx")
+        if not path.stem.lower().endswith("_merged")
+        and path.name.lower() != "merged_hotels_review.xlsx"
+        and (args.output is None or path.resolve() != args.output.resolve())
     )[:2]
     if len(input_paths) != 2:
         parser.error("Provide exactly two input .xlsx files, or place two .xlsx files in this folder.")
@@ -693,11 +701,12 @@ def main() -> None:
             parser.error(f"Input file not found: {path}")
         if path.suffix.lower() != ".xlsx":
             parser.error(f"Input must be an .xlsx file: {path}")
+    output_path = args.output or Path(merged_filename(input_paths[0]))
     try:
-        summary = merge_workbooks(input_paths, args.output)
+        summary = merge_workbooks(input_paths, output_path)
     except (OSError, ValueError) as error:
         parser.error(str(error))
-    print(f"Created {args.output.resolve()}")
+    print(f"Created {output_path.resolve()}")
     print(
         f"Processed {summary['records']} hotel records; "
         f"{summary['merged_groups']} merged groups; "
