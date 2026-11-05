@@ -19,13 +19,25 @@ from openpyxl.utils import get_column_letter
 
 
 ORANGE = PatternFill("solid", fgColor="FCE4D6")
+PINK = PatternFill("solid", fgColor="F4CCCC")
 YELLOW = PatternFill("solid", fgColor="FFF2CC")
-RED = PatternFill("solid", fgColor="F4CCCC")
 HEADER = PatternFill("solid", fgColor="1F4E78")
 HEADER_FONT = Font(color="FFFFFF", bold=True)
-NAME_HEADERS = {"name", "hotel", "hotelname", "propertyname"}
-RATING_HEADERS = {"rating", "stars", "hotelrating", "googlestars"}
-EMAIL_HEADERS = {"email", "emailaddress", "emailadress"}
+NAME_HEADERS = {"name", "hotel", "hotelname", "propertyname", "hotelnamemerged"}
+HOTEL_COLUMNS = [
+    "Hotel name", "Stars", "Google rating", "Email 1", "Email 2", "Email 3",
+    "Email 4", "Email 5", "Address", "Phone number", "Website",
+]
+FIELD_ALIASES = {
+    "Stars": {"stars", "star", "starcategory", "hotelstars", "starclassification",
+              "hotelclass", "hotelcategory", "category", "rating", "hotelrating", "googlestars",
+              "stelebooking", "bookingstars"},
+    "Google rating": {"googlerating", "googlescore", "googlereviewrating", "googlereviews", "googlereviewscore"},
+    "Address": {"address", "hoteladdress", "streetaddress"},
+    "Phone number": {"phone", "phonenumber", "telephone", "tel", "hotelphone"},
+    "Website": {"website", "web", "url", "hotelwebsite", "websiteurl"},
+}
+EMAIL_PATTERN = re.compile(r"[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+", re.I)
 COORDINATE_RADIUS_METERS = 30
 AUTO_NAME_SIMILARITY = 0.86
 POTENTIAL_NAME_SIMILARITY = 0.88
@@ -91,10 +103,100 @@ def cell_text(value: Any) -> str:
     return "" if value is None else str(value).strip()
 
 
+def field_kind(header: str) -> str:
+    key = normalized(header)
+    if key in NAME_HEADERS:
+        return "Hotel name"
+    if "email" in key:
+        return "Email"
+    return next((name for name, aliases in FIELD_ALIASES.items() if key in aliases), key)
+
+
+def star_number(value: Any) -> int | None:
+    text = cell_text(value).lower()
+    if re.fullmatch(r"[\u2605\u2606*]{1,5}", text):
+        return len(text)
+    match = re.fullmatch(r"([1-5])(?:[.,]0)?\s*(?:\*|stars?|stele|\u2605)?", text)
+    return int(match[1]) if match else None
+
+
+def category_number(value: Any) -> int | None:
+    match = re.match(r"^\s*([1-5])\s*(?:\*|stars?\b|stele\b|\u2605)", cell_text(value), re.I)
+    return int(match[1]) if match else None
+
+
+def record_emails(fields: dict[str, Any]) -> list[str]:
+    emails: list[str] = []
+    seen: set[str] = set()
+    for header, value in fields.items():
+        if field_kind(header) != "Email" and not re.match(r"^(field|column)_", header):
+            continue
+        for match in EMAIL_PATTERN.finditer(cell_text(value)):
+            email = match[0].strip(".")
+            if email.lower() not in seen:
+                seen.add(email.lower())
+                emails.append(email)
+    return emails
+
+
+def email_priority(email: str) -> int:
+    local = email.split("@", 1)[0].lower()
+    if re.search(r"group|sales|reservation|reservierung|reserver|booking|meeting|event|banquet|convention|(^|[._-])rsv", local):
+        return 0
+    if re.search(r"no[._-]?reply|newsletter|unsubscribe", local):
+        return 2
+    return 1
+
+
+def hotel_values(group_records: list[dict[str, Any]]) -> tuple[list[Any], list[str]]:
+    """Combine aliases across every source; leave contradictory categories for review."""
+    fields: dict[str, list[Any]] = defaultdict(list)
+    emails: list[str] = []
+    seen_emails: set[str] = set()
+    for record in group_records:
+        for header, value in record["fields"].items():
+            if value is None or cell_text(value) == "":
+                continue
+            kind = field_kind(header)
+            if kind not in {"Hotel name", "Email"}:
+                fields[kind].append(value.strip() if isinstance(value, str) else value)
+        if record.get("category") and not any(
+            star_number(value) for header, value in record["fields"].items() if field_kind(header) == "Stars"
+        ):
+            fields["Stars"].append(record["category"])
+        for email in record_emails(record["fields"]):
+            if email.lower() not in seen_emails:
+                emails.append(email)
+                seen_emails.add(email.lower())
+    emails.sort(key=email_priority)  # Stable: equal-priority contacts retain source order.
+    notes: list[str] = []
+    stars = sorted({number for value in fields["Stars"] if (number := star_number(value))})
+    category = f"{stars[0]}*" if len(stars) == 1 else "Conflicting / review" if stars else "Unrated / review"
+    if len(stars) > 1:
+        notes.append("Conflicting stars: " + ", ".join(f"{star}*" for star in stars))
+    result: list[Any] = [cell_text(group_records[0]["name"]), category]
+    for kind in ["Google rating", "Address", "Phone number", "Website"]:
+        values = unique_values(fields[kind])
+        if kind == "Google rating":
+            values = unique_values([numeric_rating(value) for value in values])
+        if len(values) > 1:
+            notes.append(f"Conflicting {kind.lower()}: " + " | ".join(map(str, values)))
+        result.append(values[0] if len(values) == 1 else " | ".join(map(str, values)) if values else None)
+    if len(emails) > 5:
+        notes.append(f"{len(emails) - 5} additional email(s) retained on Source tabs")
+    return result[:3] + (emails[:5] + [None] * max(0, 5 - len(emails))) + result[3:], notes
+
+
+def numeric_rating(value: Any) -> Any:
+    try:
+        return float(str(value).replace(",", "."))
+    except (TypeError, ValueError):
+        return value
+
+
 def is_header_row(values: tuple[Any, ...] | list[Any]) -> bool:
-    first = normalized(values[0]) if values else ""
-    rest = {normalized(value) for value in values[1:] if value is not None}
-    return first in NAME_HEADERS and bool(rest & (RATING_HEADERS | EMAIL_HEADERS))
+    kinds = {field_kind(cell_text(value)) for value in values if value is not None}
+    return "Hotel name" in kinds and bool(kinds & {"Stars", "Email", "Google rating", "Address", "Phone number", "Website"})
 
 
 def find_header_row(rows: list[tuple[Any, ...]]) -> int | None:
@@ -132,7 +234,7 @@ class DisjointSet:
             self.parents[right_root] = left_root
 
 
-def workbook_rows(path: Path) -> list[dict[str, Any]]:
+def workbook_rows(path: Path, source_number: int = 1) -> list[dict[str, Any]]:
     source_book = load_workbook(path, data_only=False)
     records: list[dict[str, Any]] = []
     for worksheet in source_book.worksheets:
@@ -149,14 +251,17 @@ def workbook_rows(path: Path) -> list[dict[str, Any]]:
             while len(headers) < max_columns:
                 headers.append(f"column_{len(headers) + 1}")
 
+        category = category_number(worksheet.title)
         for row_index, values in enumerate(rows):
             if row_index == header_index or is_header_row(values):
                 continue
             padded = tuple(values) + (None,) * (len(headers) - len(values))
-            fields = {
-                header or f"column_{column_index + 1}": value
-                for column_index, (header, value) in enumerate(zip(headers, padded))
-            }
+            fields = {}
+            for column_index, (header, value) in enumerate(zip(headers, padded)):
+                key = header or f"column_{column_index + 1}"
+                while key in fields:
+                    key += " "
+                fields[key] = value
             name = next(
                 (
                     value
@@ -165,13 +270,14 @@ def workbook_rows(path: Path) -> list[dict[str, Any]]:
                 ),
                 None,
             )
-            if not name or not any(value is not None and value != "" for value in padded[1:]):
+            nonempty = [value for value in padded if cell_text(value)]
+            section = category_number(name) if len(nonempty) == 1 else None
+            if section:
+                category = section
                 continue
-            emails = {
-                normalized(value)
-                for header, value in fields.items()
-                if "email" in normalized(header) and value and "@" in str(value)
-            }
+            if not name or (header_index == -1 and len(nonempty) < 2):
+                continue
+            emails = {email.lower() for email in record_emails(fields)}
             lat = next(
                 (value for header, value in fields.items() if normalized(header) in {"latitude", "lat"}),
                 None,
@@ -181,12 +287,13 @@ def workbook_rows(path: Path) -> list[dict[str, Any]]:
                 None,
             )
             address = next(
-                (value for header, value in fields.items() if normalized(header) in {"address", "hoteladdress"}),
+                (value for header, value in fields.items() if field_kind(header) == "Address"),
                 None,
             )
             records.append(
                 {
                     "source": path.name,
+                    "source_number": source_number,
                     "sheet": worksheet.title,
                     "row": row_index + 1,
                     "fields": fields,
@@ -194,6 +301,7 @@ def workbook_rows(path: Path) -> list[dict[str, Any]]:
                     "emails": {email for email in emails if email},
                     "address": address,
                     "coordinate": coordinate((lat, lon)),
+                    "category": category,
                 }
             )
     source_book.close()
@@ -241,7 +349,7 @@ def pair_evidence(left: dict[str, Any], right: dict[str, Any]) -> tuple[str | No
     if nearby:
         return None, "Coordinates within 30 m; confirm property identity"
     if (
-        left["source"] != right["source"]
+        left.get("source_number", left["source"]) != right.get("source_number", right["source"])
         and similarity >= POTENTIAL_NAME_SIMILARITY
         and meaningful_name_tokens(left["name"])
         and meaningful_name_tokens(left["name"]) & meaningful_name_tokens(right["name"])
@@ -251,7 +359,7 @@ def pair_evidence(left: dict[str, Any], right: dict[str, Any]) -> tuple[str | No
 
 
 def reference(record: dict[str, Any]) -> str:
-    return f'{record["source"]} / {record["sheet"]} / row {record["row"]}'
+    return f'Input {record["source_number"]} / {record["source"]} / {record["sheet"]} / row {record["row"]}'
 
 
 def style_header(worksheet: Any) -> None:
@@ -300,7 +408,7 @@ def copy_source_sheet(
     destination.sheet_view.showGridLines = source_worksheet.sheet_view.showGridLines
     for row_number in duplicate_rows:
         for cell in destination[row_number]:
-            cell.fill = ORANGE
+            cell.fill = PINK
     for row_number in candidate_rows - duplicate_rows:
         for cell in destination[row_number]:
             cell.fill = YELLOW
@@ -322,7 +430,7 @@ def safe_sheet_title(title: str, used: set[str]) -> str:
 def merge_workbooks(input_paths: list[Path], output_path: Path) -> dict[str, int]:
     if len(input_paths) != 2:
         raise ValueError("Provide exactly two input workbooks.")
-    records = [record for path in input_paths for record in workbook_rows(path)]
+    records = [record for number, path in enumerate(input_paths, 1) for record in workbook_rows(path, number)]
     if not records:
         raise ValueError("No hotel rows were found in the input workbooks.")
 
@@ -332,6 +440,15 @@ def merge_workbooks(input_paths: list[Path], output_path: Path) -> dict[str, int
         for right_index in range(left_index + 1, len(records)):
             right = records[right_index]
             auto_reason, candidate_reason = pair_evidence(left, right)
+            if auto_reason and disjoint_set.find(left_index) != disjoint_set.find(right_index):
+                left_group = [index for index in range(len(records)) if disjoint_set.find(index) == disjoint_set.find(left_index)]
+                right_group = [index for index in range(len(records)) if disjoint_set.find(index) == disjoint_set.find(right_index)]
+                if any(
+                    (pair_evidence(records[a], records[b])[1] or "").startswith("Location fields disagree")
+                    for a in left_group for b in right_group
+                ):
+                    auto_reason = None
+                    candidate_reason = "Location fields disagree within proposed group; keep separate for review"
             if auto_reason:
                 disjoint_set.union(left_index, right_index)
                 links.append(
@@ -357,14 +474,19 @@ def merge_workbooks(input_paths: list[Path], output_path: Path) -> dict[str, int
     groups: dict[int, list[int]] = defaultdict(list)
     for index in range(len(records)):
         groups[disjoint_set.find(index)].append(index)
-    ordered_groups = sorted(groups.values(), key=lambda group: min(group))
+    def group_order(group: list[int]) -> tuple[int, str]:
+        values, _ = hotel_values([records[index] for index in group])
+        star = star_number(values[1])
+        return ({3: 0, 4: 1, 5: 2}.get(star, 3), normalized(values[0]))
 
-    duplicate_rows: dict[tuple[str, str], set[int]] = defaultdict(set)
-    candidate_rows: dict[tuple[str, str], set[int]] = defaultdict(set)
+    ordered_groups = sorted(groups.values(), key=group_order)
+
+    duplicate_rows: dict[tuple[int, str], set[int]] = defaultdict(set)
+    candidate_rows: dict[tuple[int, str], set[int]] = defaultdict(set)
     for link in links:
         for index in (link["left"], link["right"]):
             record = records[index]
-            key = (record["source"], record["sheet"])
+            key = (record["source_number"], record["sheet"])
             if link["status"] == "MERGED - REVIEW":
                 duplicate_rows[key].add(record["row"])
             else:
@@ -374,14 +496,12 @@ def merge_workbooks(input_paths: list[Path], output_path: Path) -> dict[str, int
     output.remove(output.active)
     used_titles: set[str] = set()
     input_workbooks = [load_workbook(path, data_only=False) for path in input_paths]
-    source_titles: dict[tuple[str, str], str] = {}
     for input_index, (path, source_book) in enumerate(zip(input_paths, input_workbooks), start=1):
         for source_worksheet in source_book.worksheets:
             title = safe_sheet_title(
                 f"Source {input_index} - {path.stem} - {source_worksheet.title}", used_titles
             )
-            key = (path.name, source_worksheet.title)
-            source_titles[key] = title
+            key = (input_index, source_worksheet.title)
             copy_source_sheet(
                 source_worksheet,
                 output,
@@ -390,73 +510,50 @@ def merge_workbooks(input_paths: list[Path], output_path: Path) -> dict[str, int
                 candidate_rows[key],
             )
 
-    source_headers: list[tuple[str, str, str]] = []
+    extra_headers: dict[str, str] = {}
     for record in records:
-        for field in record["fields"]:
-            column = (record["source"], record["sheet"], field)
-            if column not in source_headers:
-                source_headers.append(column)
+        for field, value in record["fields"].items():
+            kind = field_kind(field)
+            if re.match(r"^(field|column)_", field) and record_emails({field: value}):
+                remainder = EMAIL_PATTERN.sub("", cell_text(value)).strip(" ;,|<>.\t\r\n")
+                if not remainder:
+                    continue  # Unlabelled contacts already belong in the five email columns.
+            if kind not in {"Hotel name", "Email", *FIELD_ALIASES} and cell_text(value):
+                extra_headers.setdefault(kind, field)
 
     merged_sheet = output.create_sheet("Merged Hotels", 0)
-    fixed_headers = [
-        "Hotel name (merged)",
-        "Merge status",
-        "Source record count",
-        "Source workbooks",
-        "Match evidence",
-        "Source references",
-    ]
-    field_headers = [
-        f"{source_titles[(source, sheet)]} / {field}"
-        for source, sheet, field in source_headers
-    ]
-    merged_sheet.append(fixed_headers + field_headers)
-    conflicts: list[tuple[int, int]] = []
+    merged_sheet.append(HOTEL_COLUMNS + list(extra_headers.values()) + [
+        "Row type", "Source record count", "Source references", "Review notes",
+    ])
+
+    def append_hotel(hotels: list[dict[str, Any]], row_type: str, fill: Any = None) -> None:
+        values, notes = hotel_values(hotels)
+        for kind, label in extra_headers.items():
+            alternatives = unique_values([
+                value for hotel in hotels for header, value in hotel["fields"].items()
+                if field_kind(header) == kind and cell_text(value)
+            ])
+            if len(alternatives) > 1:
+                notes.append(f"Conflicting {label}: " + " | ".join(map(str, alternatives)))
+            values.append(alternatives[0] if len(alternatives) == 1 else " | ".join(map(str, alternatives)) if alternatives else None)
+        if row_type == "MERGED - REVIEW":
+            notes.insert(0, "Check merged hotel and contact details before use")
+        merged_sheet.append(values + [row_type, len(hotels), " | ".join(reference(hotel) for hotel in hotels), "; ".join(notes)])
+        for cell in merged_sheet[merged_sheet.max_row]:
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+            if fill:
+                cell.fill = fill
+        merged_sheet.cell(merged_sheet.max_row, 3).number_format = "0.0"
+        merged_sheet.cell(merged_sheet.max_row, 10).number_format = "@"
+
     for group in ordered_groups:
         group_records = [records[index] for index in group]
-        names = unique_values([record["name"] for record in group_records])
-        evidence = unique_values(
-            [
-                link["reason"]
-                for link in links
-                if link["status"] == "MERGED - REVIEW"
-                and link["left"] in group
-                and link["right"] in group
-            ]
-        )
-        status = "MERGED - REVIEW" if len(group) > 1 else "SINGLE RECORD"
-        values: list[Any] = [
-            " | ".join(str(name) for name in names),
-            status,
-            len(group_records),
-            " | ".join(unique_values([record["source"] for record in group_records])),
-            " | ".join(str(value) for value in evidence),
-            " | ".join(reference(record) for record in group_records),
-        ]
-        for column_index, (source, sheet, field) in enumerate(source_headers, start=7):
-            field_values = unique_values(
-                [
-                    record["fields"].get(field)
-                    for record in group_records
-                    if record["source"] == source and record["sheet"] == sheet
-                ]
-            )
-            if len(field_values) > 1:
-                conflicts.append((merged_sheet.max_row + 1, column_index))
-            values.append(
-                field_values[0]
-                if len(field_values) == 1
-                else " | ".join(str(value) for value in field_values)
-                if field_values
-                else None
-            )
-        merged_sheet.append(values)
-        if len(group_records) > 1:
-            for cell in merged_sheet[merged_sheet.max_row]:
-                cell.fill = ORANGE
+        duplicate = len(group_records) > 1
+        append_hotel(group_records, "MERGED - REVIEW" if duplicate else "SINGLE RECORD", ORANGE if duplicate else None)
+        if duplicate:
+            for record in group_records:
+                append_hotel([record], "SOURCE DUPLICATE", PINK)
     style_header(merged_sheet)
-    for row_number, column_number in conflicts:
-        merged_sheet.cell(row_number, column_number).fill = RED
 
     review_sheet = output.create_sheet("Match Review")
     review_sheet.append(
@@ -495,12 +592,9 @@ def merge_workbooks(input_paths: list[Path], output_path: Path) -> dict[str, int
     unassigned_sheet = output.create_sheet("Unassigned Rows")
     unassigned_sheet.append(["Source", "Sheet", "Row", "Raw non-empty values"])
     assigned_positions = {
-        (record["source"], record["sheet"], record["row"]) for record in records
+        (record["source_number"], record["sheet"], record["row"]) for record in records
     }
-    for path in input_paths:
-        source_book = next(
-            book for candidate_path, book in zip(input_paths, input_workbooks) if candidate_path == path
-        )
+    for input_index, (path, source_book) in enumerate(zip(input_paths, input_workbooks), 1):
         for source_worksheet in source_book.worksheets:
             header_index = find_header_row(
                 [tuple(row) for row in source_worksheet.iter_rows(min_row=1, max_row=min(source_worksheet.max_row or 1, 1000), values_only=True)]
@@ -511,7 +605,7 @@ def merge_workbooks(input_paths: list[Path], output_path: Path) -> dict[str, int
                     continue
                 if header_index == row_number - 1 or is_header_row(values):
                     continue
-                if (path.name, source_worksheet.title, row_number) in assigned_positions:
+                if (input_index, source_worksheet.title, row_number) in assigned_positions:
                     continue
                 unassigned_sheet.append(
                     [
@@ -527,17 +621,17 @@ def merge_workbooks(input_paths: list[Path], output_path: Path) -> dict[str, int
                 )
     style_header(unassigned_sheet)
 
-    instructions = output.create_sheet("Read Me", 0)
+    instructions = output.create_sheet("Read Me")
     instructions.append(["Hotel workbook merge - reviewer guide"])
     instructions.append(["Both original workbooks are copied to the Source tabs; source values are not removed."])
-    instructions.append(["Merged Hotels lists exact-name/strong-evidence groups plus all single-source records."])
-    instructions.append(["Orange rows are merged groups or exact/high-confidence duplicate links; review their source references."])
+    instructions.append(["Merged Hotels is sorted by 3*, 4*, 5*, then other/unrated/conflicting categories; hotels are alphabetical within each category."])
+    instructions.append(["Orange rows combine a hotel's data and require manual checking. Pink original duplicate records sit directly below each orange row."])
     instructions.append(["Yellow rows in Match Review are possible variants only. They are NOT automatically merged."])
-    instructions.append(["Red cells in Merged Hotels indicate differing values within that source field; all raw values remain on Source tabs."])
+    instructions.append(["Five email columns show distinct contacts, prioritizing Groups, Sales, Reservations and Events; ties keep source order. Extra emails remain on Source tabs."])
     instructions.append(["Location matching uses identical normalized addresses or coordinates within 30 m plus a similar name."])
-    instructions.append(["This pair of sample files has no location fields in its contact-list workbook, so name-only variants remain review candidates."])
+    instructions.append(["Hotel stars and Google review ratings are separate. Conflicting star categories remain unclassified for review; conflicting values are listed in Review notes."])
     instructions.append(["Blank-name rows and category/header rows are retained in Source tabs; non-header unassigned rows are listed separately."])
-    instructions.append(["Merged rows combine distinct values only for display. Inspect the source references/tabs before accepting any merge."])
+    instructions.append(["Contacts are taken from your files; their validity and whether they are verified must be checked manually. Filter Stars and Row type to select hotels."])
     instructions.append(["Input records processed", len(records)])
     instructions.append(["Merged groups", sum(len(group) > 1 for group in ordered_groups)])
     instructions.append(["Single records", sum(len(group) == 1 for group in ordered_groups)])

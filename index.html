@@ -81,16 +81,26 @@
       const button = document.querySelector("#merge");
       const status = document.querySelector("#status");
       const orange = { fill: { fgColor: { rgb: "FCE4D6" } } };
+      const pink = { fill: { fgColor: { rgb: "F4CCCC" } } };
       const yellow = { fill: { fgColor: { rgb: "FFF2CC" } } };
-      const red = { fill: { fgColor: { rgb: "F4CCCC" } } };
       const headerStyle = {
         fill: { fgColor: { rgb: "1F4E78" } },
         font: { color: { rgb: "FFFFFF" }, bold: true },
         alignment: { wrapText: true, vertical: "center" }
       };
-      const nameHeaders = new Set(["name", "hotel", "hotelname", "propertyname"]);
-      const ratingHeaders = new Set(["rating", "stars", "hotelrating", "googlestars"]);
-      const emailHeaders = new Set(["email", "emailaddress", "emailadress"]);
+      const nameHeaders = new Set(["name", "hotel", "hotelname", "propertyname", "hotelnamemerged"]);
+      const hotelColumns = [
+        "Hotel name", "Stars", "Google rating", "Email 1", "Email 2", "Email 3",
+        "Email 4", "Email 5", "Address", "Phone number", "Website"
+      ];
+      const fieldAliases = {
+        "Stars": ["stars", "star", "starcategory", "hotelstars", "starclassification", "hotelclass",
+          "hotelcategory", "category", "rating", "hotelrating", "googlestars", "stelebooking", "bookingstars"],
+        "Google rating": ["googlerating", "googlescore", "googlereviewrating", "googlereviews", "googlereviewscore"],
+        "Address": ["address", "hoteladdress", "streetaddress"],
+        "Phone number": ["phone", "phonenumber", "telephone", "tel", "hotelphone"],
+        "Website": ["website", "web", "url", "hotelwebsite", "websiteurl"]
+      };
       const genericNameTokens = new Set([
         "a", "an", "and", "athens", "by", "city", "hotel", "hotels", "in", "of",
         "the"
@@ -137,17 +147,86 @@
         return result;
       };
       const isHeader = row => {
-        const first = normalize(row[0]);
-        const rest = new Set(row.slice(1).filter(nonEmpty).map(normalize));
-        return nameHeaders.has(first) &&
-          [...rest].some(value => ratingHeaders.has(value) || emailHeaders.has(value));
+        const kinds = new Set(row.filter(nonEmpty).map(value => fieldKind(String(value))));
+        return kinds.has("Hotel name") &&
+          ["Stars", "Email", "Google rating", "Address", "Phone number", "Website"].some(kind => kinds.has(kind));
       };
+      function fieldKind(header) {
+        const key = normalize(header);
+        if (nameHeaders.has(key)) return "Hotel name";
+        if (key.includes("email")) return "Email";
+        return Object.keys(fieldAliases).find(kind => fieldAliases[kind].includes(key)) || key;
+      }
+      function starNumber(value) {
+        const text = String(value ?? "").trim().toLowerCase();
+        if (/^[\u2605\u2606*]{1,5}$/.test(text)) return text.length;
+        const match = text.match(/^([1-5])(?:[.,]0)?\s*(?:\*|stars?|stele|\u2605)?$/);
+        return match ? Number(match[1]) : null;
+      }
+      function categoryNumber(value) {
+        const match = String(value ?? "").match(/^\s*([1-5])\s*(?:\*|stars?\b|stele\b|\u2605)/i);
+        return match ? Number(match[1]) : null;
+      }
+      function recordEmails(fields) {
+        const result = [], seen = new Set();
+        for (const [header, value] of Object.entries(fields)) {
+          if (fieldKind(header) !== "Email" && !/^(field|column)_/.test(header)) continue;
+          const matches = String(value ?? "").match(/[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+/gi) || [];
+          for (const match of matches) {
+            const email = match.replace(/^\.+|\.+$/g, ""), key = email.toLowerCase();
+            if (!seen.has(key)) { seen.add(key); result.push(email); }
+          }
+        }
+        return result;
+      }
+      function emailPriority(email) {
+        const local = email.split("@")[0].toLowerCase();
+        if (/group|sales|reservation|reservierung|reserver|booking|meeting|event|banquet|convention|(^|[._-])rsv/.test(local)) return 0;
+        return /no[._-]?reply|newsletter|unsubscribe/.test(local) ? 2 : 1;
+      }
+      function hotelValues(hotels) {
+        const fields = new Map(), emails = [], seen = new Set(), notes = [];
+        const add = (kind, value) => {
+          if (!fields.has(kind)) fields.set(kind, []);
+          fields.get(kind).push(value);
+        };
+        for (const hotel of hotels) {
+          for (const [header, value] of Object.entries(hotel.fields)) {
+            if (!nonEmpty(value) || !String(value).trim()) continue;
+            const kind = fieldKind(header);
+            if (!["Hotel name", "Email"].includes(kind)) add(kind, typeof value === "string" ? value.trim() : value);
+          }
+          if (hotel.category && !Object.entries(hotel.fields).some(([header, value]) => fieldKind(header) === "Stars" && starNumber(value)))
+            add("Stars", hotel.category);
+          for (const email of recordEmails(hotel.fields)) {
+            if (!seen.has(email.toLowerCase())) { seen.add(email.toLowerCase()); emails.push(email); }
+          }
+        }
+        emails.sort((a, b) => emailPriority(a) - emailPriority(b));
+        const stars = [...new Set((fields.get("Stars") || []).map(starNumber).filter(Boolean))].sort();
+        const category = stars.length === 1 ? `${stars[0]}*` : stars.length ? "Conflicting / review" : "Unrated / review";
+        if (stars.length > 1) notes.push(`Conflicting stars: ${stars.map(star => `${star}*`).join(", ")}`);
+        const values = [String(hotels[0].name).trim(), category];
+        for (const kind of ["Google rating", "Address", "Phone number", "Website"]) {
+          let alternatives = unique(fields.get(kind) || []);
+          if (kind === "Google rating") alternatives = unique(alternatives.map(value => {
+            const number = Number(String(value).replace(",", "."));
+            return Number.isFinite(number) ? number : value;
+          }));
+          if (alternatives.length > 1) notes.push(`Conflicting ${kind.toLowerCase()}: ${alternatives.join(" | ")}`);
+          values.push(alternatives.length > 1 ? alternatives.join(" | ") : alternatives[0] ?? null);
+        }
+        if (emails.length > 5) notes.push(`${emails.length - 5} additional email(s) retained on Source tabs`);
+        return { values: [...values.slice(0, 3), ...Array.from({ length: 5 }, (_, i) => emails[i] ?? null), ...values.slice(3)], notes };
+      }
       function getCoordinates(fields) {
         let lat, lon;
         for (const [key, value] of Object.entries(fields)) {
           const header = normalize(key);
-          if (["latitude", "lat"].includes(header)) lat = Number(value);
-          if (["longitude", "lon", "lng"].includes(header)) lon = Number(value);
+          if (nonEmpty(value) && String(value).trim()) {
+            if (["latitude", "lat"].includes(header)) lat = Number(value);
+            if (["longitude", "lon", "lng"].includes(header)) lon = Number(value);
+          }
         }
         return Number.isFinite(lat) && Number.isFinite(lon) &&
           lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180 ? [lat, lon] : null;
@@ -169,7 +248,7 @@
         used.add(title);
         return title;
       }
-      function addWorksheet(book, title, rows, used, fillRows = new Map(), conflictCells = []) {
+      function addWorksheet(book, title, rows, used, fillRows = new Map()) {
         const sheetName = safeTitle(title, used);
         const worksheet = XLSX.utils.aoa_to_sheet(rows);
         const columns = Math.max(...rows.map(row => row.length), 1);
@@ -180,12 +259,21 @@
         for (const [rowNumber, fill] of fillRows) {
           for (let column = 0; column < columns; column++) {
             const cell = worksheet[XLSX.utils.encode_cell({ r: rowNumber, c: column })];
-            if (cell) cell.s = fill;
+            const address = XLSX.utils.encode_cell({ r: rowNumber, c: column });
+            worksheet[address] = { ...(cell || { t: "s", v: "" }), s: {
+              alignment: { wrapText: true, vertical: "top" }, ...fill
+            } };
           }
         }
-        for (const [rowNumber, column] of conflictCells) {
-          const cell = worksheet[XLSX.utils.encode_cell({ r: rowNumber, c: column })];
-          if (cell) cell.s = red;
+        if (title === "Merged Hotels") for (let rowNumber = 1; rowNumber < rows.length; rowNumber++) {
+          for (let column = 0; column < columns; column++) {
+            const cell = worksheet[XLSX.utils.encode_cell({ r: rowNumber, c: column })];
+            if (cell) {
+              cell.s = { ...cell.s, alignment: { wrapText: true, vertical: "top" } };
+              if (column === 2) cell.z = "0.0";
+              if (column === 9) cell.z = "@";
+            }
+          }
         }
         worksheet["!freeze"] = { xSplit: 0, ySplit: 1 };
         worksheet["!autofilter"] = { ref: XLSX.utils.encode_range({
@@ -237,7 +325,7 @@
         return null;
       }
       function reference(record) {
-        return `${record.file} / ${record.sheet} / row ${record.row}`;
+        return `Input ${record.sourceNumber} / ${record.file} / ${record.sheet} / row ${record.row}`;
       }
       async function parseInput(file, sourceNumber) {
         const book = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
@@ -245,7 +333,7 @@
         const records = [];
         for (const sheetName of book.SheetNames) {
           const rows = XLSX.utils.sheet_to_json(book.Sheets[sheetName], {
-            header: 1, raw: true, defval: null, blankrows: true
+            header: 1, raw: true, defval: null, blankrows: true, range: 0
           });
           sheets.push({ name: sheetName, rows });
           let headerIndex = rows.findIndex(isHeader);
@@ -259,27 +347,31 @@
             headers = rows[headerIndex].map(value => String(value ?? ""));
             while (headers.length < maxColumns) headers.push(`column_${headers.length + 1}`);
           }
+          let category = categoryNumber(sheetName);
           rows.forEach((row, rowIndex) => {
             if (rowIndex === headerIndex || isHeader(row)) return;
             const values = [...row];
             while (values.length < headers.length) values.push(null);
-            const fields = Object.fromEntries(headers.map((header, index) => [
-              header || `column_${index + 1}`, values[index]
-            ]));
+            const fields = {};
+            headers.forEach((header, index) => {
+              let key = header || `column_${index + 1}`;
+              while (Object.hasOwn(fields, key)) key += " ";
+              fields[key] = values[index];
+            });
             const nameKey = Object.keys(fields).find(key => nameHeaders.has(normalize(key)));
             const name = nameKey ? fields[nameKey] : null;
-            if (!nonEmpty(name) || !values.slice(1).some(nonEmpty)) return;
-            const emails = new Set(Object.entries(fields)
-              .filter(([key, value]) => normalize(key).includes("email") &&
-                nonEmpty(value) && String(value).includes("@"))
-              .map(([, value]) => normalize(value)).filter(Boolean));
+            const populated = values.filter(value => nonEmpty(value) && String(value).trim());
+            const section = populated.length === 1 ? categoryNumber(name) : null;
+            if (section) { category = section; return; }
+            if (!nonEmpty(name) || !String(name).trim() || (headerIndex === -1 && populated.length < 2)) return;
+            const emails = new Set(recordEmails(fields).map(email => email.toLowerCase()));
             const addressKey = Object.keys(fields).find(key =>
-              ["address", "hoteladdress"].includes(normalize(key)));
+              fieldKind(key) === "Address");
             records.push({
               sourceNumber, file: file.name, sheet: sheetName, row: rowIndex + 1,
               fields, name, emails,
               address: addressKey ? fields[addressKey] : null,
-              coordinates: getCoordinates(fields)
+              coordinates: getCoordinates(fields), category
             });
           });
         }
@@ -298,7 +390,18 @@
           for (let right = left + 1; right < records.length; right++) {
             const match = getMatch(records[left], records[right]);
             if (!match) continue;
-            const [reviewStatus, reason, score] = match;
+            let [reviewStatus, reason, score] = match;
+            if (reviewStatus === "MERGED - REVIEW" && find(left) !== find(right)) {
+              const leftGroup = records.map((_, index) => index).filter(index => find(index) === find(left));
+              const rightGroup = records.map((_, index) => index).filter(index => find(index) === find(right));
+              if (leftGroup.some(a => rightGroup.some(b => {
+                const evidence = getMatch(records[a], records[b]);
+                return evidence && evidence[1].startsWith("Location fields disagree");
+              }))) {
+                reviewStatus = "POTENTIAL MATCH - REVIEW";
+                reason = "Location fields disagree within proposed group; keep separate for review";
+              }
+            }
             if (reviewStatus === "MERGED - REVIEW") union(left, right);
             links.push({ left, right, status: reviewStatus, reason, score });
           }
@@ -309,7 +412,13 @@
           if (!groups.has(root)) groups.set(root, []);
           groups.get(root).push(index);
         });
-        const orderedGroups = [...groups.values()].sort((a, b) => a[0] - b[0]);
+        const groupValues = new Map([...groups.values()].map(group => [group, hotelValues(group.map(index => records[index])).values]));
+        const rank = stars => ({ 3: 0, 4: 1, 5: 2 }[starNumber(stars)] ?? 3);
+        const orderedGroups = [...groups.values()].sort((a, b) => {
+          const left = groupValues.get(a), right = groupValues.get(b);
+          const leftName = normalize(left[0]), rightName = normalize(right[0]);
+          return rank(left[1]) - rank(right[1]) || (leftName < rightName ? -1 : leftName > rightName ? 1 : 0);
+        });
         const duplicateRows = new Map(), candidateRows = new Map();
         for (const link of links) for (const index of [link.left, link.right]) {
           const record = records[index];
@@ -324,63 +433,58 @@
         }
         const output = XLSX.utils.book_new();
         const used = new Set();
-        const sourceNames = new Map();
         for (const source of sources) {
           for (const sheet of source.sheets) {
             const key = `${source.sourceNumber}\u0000${sheet.name}`;
             const duplicateRowsForSheet = duplicateRows.get(key) || new Set();
             const candidateRowsForSheet = [...(candidateRows.get(key) || [])]
               .filter(row => !duplicateRowsForSheet.has(row));
-            const title = addWorksheet(
+            addWorksheet(
               output, `Source ${source.sourceNumber} - ${source.file.name} - ${sheet.name}`,
               sheet.rows, used, new Map([
-                ...[...duplicateRowsForSheet].map(row => [row, orange]),
+                ...[...duplicateRowsForSheet].map(row => [row, pink]),
                 ...candidateRowsForSheet.map(row => [row, yellow])
               ])
             );
-            sourceNames.set(key, title);
           }
         }
-        const sourceHeaders = [];
-        for (const record of records) for (const field of Object.keys(record.fields)) {
-          const key = `${record.sourceNumber}\u0000${record.sheet}\u0000${field}`;
-          if (!sourceHeaders.some(entry => entry.key === key))
-            sourceHeaders.push({ key, sourceNumber: record.sourceNumber, sheet: record.sheet, field });
+        const extraHeaders = new Map();
+        for (const record of records) for (const [field, value] of Object.entries(record.fields)) {
+          const kind = fieldKind(field);
+          if (/^(field|column)_/.test(field)) {
+            const emails = recordEmails({ [field]: value });
+            let remainder = String(value ?? "");
+            for (const email of emails) remainder = remainder.replaceAll(email, "");
+            if (emails.length && !remainder.replace(/[\s;,|<>.]/g, "")) continue;
+          }
+          if (!["Hotel name", "Email", ...Object.keys(fieldAliases)].includes(kind) && nonEmpty(value) && String(value).trim())
+            if (!extraHeaders.has(kind)) extraHeaders.set(kind, field);
         }
         const mergedRows = [[
-          "Hotel name (merged)", "Merge status", "Source record count", "Source workbooks",
-          "Match evidence", "Source references",
-          ...sourceHeaders.map(entry =>
-            `${sourceNames.get(`${entry.sourceNumber}\u0000${entry.sheet}`)} / ${entry.field}`)
+          ...hotelColumns, ...extraHeaders.values(),
+          "Row type", "Source record count", "Source references", "Review notes"
         ]];
-        const conflicts = [];
+        const mergedFillRows = new Map();
+        function appendHotel(hotels, rowType, fill) {
+          const { values, notes } = hotelValues(hotels);
+          for (const [kind, label] of extraHeaders) {
+            const alternatives = unique(hotels.flatMap(hotel => Object.entries(hotel.fields)
+              .filter(([header, value]) => fieldKind(header) === kind && nonEmpty(value) && String(value).trim())
+              .map(([, value]) => value)));
+            if (alternatives.length > 1) notes.push(`Conflicting ${label}: ${alternatives.join(" | ")}`);
+            values.push(alternatives.length > 1 ? alternatives.join(" | ") : alternatives[0] ?? null);
+          }
+          if (rowType === "MERGED - REVIEW") notes.unshift("Check merged hotel and contact details before use");
+          if (fill) mergedFillRows.set(mergedRows.length, fill);
+          mergedRows.push([...values, rowType, hotels.length, hotels.map(reference).join(" | "), notes.join("; ") || null]);
+        }
         for (const group of orderedGroups) {
           const groupRecords = group.map(index => records[index]);
-          const reasons = unique(links.filter(link =>
-            link.status === "MERGED - REVIEW" && group.includes(link.left) && group.includes(link.right)
-          ).map(link => link.reason));
-          const row = [
-            unique(groupRecords.map(record => record.name)).join(" | "),
-            groupRecords.length > 1 ? "MERGED - REVIEW" : "SINGLE RECORD",
-            groupRecords.length,
-            unique(groupRecords.map(record => record.file)).join(" | "),
-            reasons.join(" | "),
-            groupRecords.map(reference).join(" | ")
-          ];
-          sourceHeaders.forEach((entry, fieldIndex) => {
-            const values = unique(groupRecords
-              .filter(record => record.sourceNumber === entry.sourceNumber && record.sheet === entry.sheet)
-              .map(record => record.fields[entry.field]));
-            if (values.length > 1) conflicts.push([mergedRows.length, fieldIndex + 6]);
-            row.push(values.length > 1 ? values.map(String).join(" | ") : (values[0] ?? null));
-          });
-          mergedRows.push(row);
+          const duplicate = groupRecords.length > 1;
+          appendHotel(groupRecords, duplicate ? "MERGED - REVIEW" : "SINGLE RECORD", duplicate ? orange : null);
+          if (duplicate) for (const record of groupRecords) appendHotel([record], "SOURCE DUPLICATE", pink);
         }
-        const mergedFillRows = new Map(
-          orderedGroups.flatMap((group, index) =>
-            group.length > 1 ? [[index + 1, orange]] : [])
-        );
-        addWorksheet(output, "Merged Hotels", mergedRows, used, mergedFillRows, conflicts);
+        addWorksheet(output, "Merged Hotels", mergedRows, used, mergedFillRows);
 
         const reviewRows = [[
           "Review status", "Evidence / reason", "Name similarity", "Hotel name (input A)",
@@ -417,20 +521,21 @@
         const readme = [
           ["Hotel workbook merge - reviewer guide"],
           ["Original workbook sheets are copied to Source tabs; source values are not removed."],
-          ["Merged Hotels lists exact-name/strong-evidence groups plus all single-source records."],
-          ["Orange rows are merged groups or exact/high-confidence duplicate links; review their source references."],
+          ["Merged Hotels is sorted by 3*, 4*, 5*, then other/unrated/conflicting categories; hotels are alphabetical within each category."],
+          ["Orange rows combine a hotel's data and require manual checking. Pink original duplicate records sit directly below each orange row."],
           ["Yellow rows in Match Review are possible variants only. They are NOT automatically merged."],
-          ["Red cells in Merged Hotels indicate differing values within that source field; all raw values remain on Source tabs."],
+          ["Five email columns show distinct contacts, prioritizing Groups, Sales, Reservations and Events; ties keep source order. Extra emails remain on Source tabs."],
           ["Location matching uses identical normalized addresses or coordinates within 30 m plus a similar name."],
-          ["Name-only variants without location confirmation remain separate review candidates."],
+          ["Hotel stars and Google review ratings are separate. Conflicting star categories remain unclassified for review; conflicting values are listed in Review notes."],
           ["Blank-name rows and category/header rows are retained in Source tabs; non-header unassigned rows are listed separately."],
-          ["Merged rows combine distinct values only for display. Inspect the source references/tabs before accepting any merge."],
+          ["Contacts are taken from your files; their validity and whether they are verified must be checked manually. Filter Stars and Row type to select hotels."],
           ["Input records processed", records.length],
           ["Merged groups", mergedCount],
           ["Single records", singleCount],
           ["Potential matches", potentialCount]
         ];
         addWorksheet(output, "Read Me", readme, used);
+        output.SheetNames = ["Merged Hotels", ...output.SheetNames.filter(name => name !== "Merged Hotels")];
         XLSX.writeFile(output, "Merged_Hotels_Review.xlsx", { bookType: "xlsx", cellStyles: true });
         status.classList.remove("error");
         status.textContent = `Downloaded Merged_Hotels_Review.xlsx — ${records.length} records, ${mergedCount} merged groups, ${potentialCount} possible matches to review.`;
