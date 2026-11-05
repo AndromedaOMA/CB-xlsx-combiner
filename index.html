@@ -38,8 +38,9 @@
     .privacy { margin: 16px 0 0; font-size: .86rem; }
     .legend { display: flex; flex-wrap: wrap; gap: 12px 20px; margin: 22px 0 0; padding-top: 20px; border-top: 1px solid #e6ebf1; font-size: .85rem; }
     .legend span { display: inline-flex; align-items: center; gap: 8px; }
-    .swatch { width: 14px; height: 14px; border-radius: 4px; background: #fce4d6; border: 1px solid #e8b59f; }
-    .swatch.yellow { background: #fff2cc; border-color: #e6d389; }
+    .swatch { width: 14px; height: 14px; border-radius: 4px; border: 1px solid; }
+    .swatch.green { background: #c6efce; border-color: #9ac9a2; }
+    .swatch.blue { background: #ddebf7; border-color: #a9c3df; }
     .swatch.red { background: #f4cccc; border-color: #df9d9d; }
     #status { min-height: 24px; margin: 16px 0 0; color: #245c45; font-size: .92rem; line-height: 1.5; }
     #status.error { color: #a62d2d; }
@@ -67,9 +68,9 @@
       <p id="status" role="status" aria-live="polite"></p>
 
       <div class="legend" aria-label="Workbook color legend">
-        <span><i class="swatch"></i>Automatically merged — review</span>
-        <span><i class="swatch yellow"></i>Possible match — not merged</span>
-        <span><i class="swatch red"></i>Conflicting source values</span>
+        <span><i class="swatch green"></i>Automatically merged — review</span>
+        <span><i class="swatch blue"></i>Duplicated rows</span>
+        <span><i class="swatch red"></i>Possible match — not merged</span>
       </div>
       <p class="help">Exact normalized names and strong supporting evidence are merged. Similar names without location confirmation stay separate and are highlighted as possible matches.</p>
     </section>
@@ -80,9 +81,9 @@
       const inputs = [document.querySelector("#file-a"), document.querySelector("#file-b")];
       const button = document.querySelector("#merge");
       const status = document.querySelector("#status");
-      const orange = { fill: { fgColor: { rgb: "FCE4D6" } } };
-      const pink = { fill: { fgColor: { rgb: "F4CCCC" } } };
-      const yellow = { fill: { fgColor: { rgb: "FFF2CC" } } };
+      const green = { fill: { fgColor: { rgb: "C6EFCE" } } };
+      const blue = { fill: { fgColor: { rgb: "DDEBF7" } } };
+      const red = { fill: { fgColor: { rgb: "F4CCCC" } } };
       const headerStyle = {
         fill: { fgColor: { rgb: "1F4E78" } },
         font: { color: { rgb: "FFFFFF" }, bold: true },
@@ -442,8 +443,8 @@
             addWorksheet(
               output, `Source ${source.sourceNumber} - ${source.file.name} - ${sheet.name}`,
               sheet.rows, used, new Map([
-                ...[...duplicateRowsForSheet].map(row => [row, pink]),
-                ...candidateRowsForSheet.map(row => [row, yellow])
+                ...[...duplicateRowsForSheet].map(row => [row, blue]),
+                ...candidateRowsForSheet.map(row => [row, red])
               ])
             );
           }
@@ -481,8 +482,8 @@
         for (const group of orderedGroups) {
           const groupRecords = group.map(index => records[index]);
           const duplicate = groupRecords.length > 1;
-          appendHotel(groupRecords, duplicate ? "MERGED - REVIEW" : "SINGLE RECORD", duplicate ? orange : null);
-          if (duplicate) for (const record of groupRecords) appendHotel([record], "SOURCE DUPLICATE", pink);
+          appendHotel(groupRecords, duplicate ? "MERGED - REVIEW" : "SINGLE RECORD", duplicate ? green : null);
+          if (duplicate) for (const record of groupRecords) appendHotel([record], "SOURCE DUPLICATE", blue);
         }
         addWorksheet(output, "Merged Hotels", mergedRows, used, mergedFillRows);
 
@@ -498,7 +499,7 @@
             link.status, link.reason, Number(link.score.toFixed(3)), left.name, reference(left),
             right.name, reference(right), null, null
           ]);
-          reviewFills.set(index + 1, link.status === "MERGED - REVIEW" ? orange : yellow);
+          reviewFills.set(index + 1, link.status === "MERGED - REVIEW" ? green : red);
         });
         addWorksheet(output, "Match Review", reviewRows, used, reviewFills);
 
@@ -522,8 +523,8 @@
           ["Hotel workbook merge - reviewer guide"],
           ["Original workbook sheets are copied to Source tabs; source values are not removed."],
           ["Merged Hotels is sorted by 3*, 4*, 5*, then other/unrated/conflicting categories; hotels are alphabetical within each category."],
-          ["Orange rows combine a hotel's data and require manual checking. Pink original duplicate records sit directly below each orange row."],
-          ["Yellow rows in Match Review are possible variants only. They are NOT automatically merged."],
+          ["Green rows combine a hotel's data and require manual checking. Blue original duplicate records sit directly below each green row."],
+          ["Red rows in Match Review are possible variants only. They are NOT automatically merged."],
           ["Five email columns show distinct contacts, prioritizing Groups, Sales, Reservations and Events; ties keep source order. Extra emails remain on Source tabs."],
           ["Location matching uses identical normalized addresses or coordinates within 30 m plus a similar name."],
           ["Hotel stars and Google review ratings are separate. Conflicting star categories remain unclassified for review; conflicting values are listed in Review notes."],

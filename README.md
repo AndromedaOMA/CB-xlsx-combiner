@@ -12,8 +12,8 @@ to select hotels. The browser interface and static Vercel deployment are unchang
    rating, five separate emails, address, phone number and website. Matching
    fields from both files are combined into these columns. Other populated
    source fields follow once each, rather than repeating columns for each file.
-3. **Check orange rows.** An orange row combines duplicate records. Its original
-   records appear directly below in pink, in the same column layout. All raw
+3. **Check green rows.** A green row combines duplicate records. Its original
+   records appear directly below in blue, in the same column layout. All raw
    values also remain on the Source tabs, including emails beyond the first five.
 4. **Choose contacts.** Emails are split, deduplicated without regard to case,
    and prioritized for Groups, Sales, Reservations, Meetings and Events. Equal
@@ -23,7 +23,7 @@ to select hotels. The browser interface and static Vercel deployment are unchang
 5. **Review before using.** Check **Review notes** for conflicting fields or
    extra emails. Differing star classifications stay **Conflicting / review**.
    Filter **Row type** to `MERGED - REVIEW` and `SINGLE RECORD` when selecting
-   hotels after checking them; pink rows are supporting records.
+   hotels after checking them; blue rows are supporting records.
 
 Hotel stars (including `google_stars` and `Stele_Booking`) are separate from the
 Google review score (`google_rating`). A category heading such as `3 Stele Athens`
@@ -41,12 +41,12 @@ python main.py "Athens.xlsx" "Athens (1).xlsx" -o "Merged_Hotels_Review.xlsx"
 
 The workbook contains:
 
-- **Merged Hotels** — sorted hotel rows, with orange combined rows followed
-  immediately by their pink original duplicate records.
+- **Merged Hotels** — sorted hotel rows, with green combined rows followed
+  immediately by their blue original duplicate records.
 - **Match Review** — matched records and possible name/location variants with
   source row references and reviewer decision/notes columns.
 - **Source tabs** — copies of the input worksheets, with matched source rows
-  highlighted in pink and possible matches highlighted in yellow.
+  highlighted in blue and possible matches highlighted in red.
 - **Unassigned Rows** — non-empty rows without an identifiable hotel name.
 - **Read Me** — merge rules, color legend, and record counts.
 
@@ -55,7 +55,7 @@ are grouped unless available address/coordinate data conflict. A shared email
 supports automatic grouping only when the names are highly similar and either
 the meaningful name tokens agree or location data corroborate the match.
 Conflicting locations and name-only near matches remain separate and are shown
-as yellow review candidates; this avoids silently combining unrelated hotels
+as red review candidates; this avoids silently combining unrelated hotels
 that share a chain contact or similar brand name.
 Conflicting locations cannot be joined indirectly through a third record that
 has no location. Input numbers distinguish sources even when filenames match.

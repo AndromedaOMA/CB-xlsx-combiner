@@ -87,19 +87,19 @@ class MergeTests(unittest.TestCase):
         self.assertEqual(row[8:11], ("1 Main Street", "+31 123", "https://zulu.test"))
         self.assertEqual(row[headers.index("Custom note")], "Keep me")
         self.assertIn("2 additional email(s)", row[-1])
-        self.assertEqual(sheet.cell(zulu, 1).fill.fgColor.rgb[-6:], "FCE4D6")
+        self.assertEqual(sheet.cell(zulu, 1).fill.fgColor.rgb[-6:], "C6EFCE")
         for number in [zulu + 1, zulu + 2]:
             self.assertEqual(sheet.cell(number, status + 1).value, "SOURCE DUPLICATE")
-            self.assertEqual(sheet.cell(number, 8).fill.fgColor.rgb[-6:], "F4CCCC")
+            self.assertEqual(sheet.cell(number, 8).fill.fgColor.rgb[-6:], "DDEBF7")
         sources = [book[name] for name in book.sheetnames if name.startswith("Source")]
         self.assertEqual(sources[0]["C2"].value, left[1][2])
         self.assertEqual(sources[1]["D2"].value, right[1][3])
-        self.assertEqual(sources[0]["A2"].fill.fgColor.rgb[-6:], "F4CCCC")
-        self.assertEqual(sources[1]["A2"].fill.fgColor.rgb[-6:], "F4CCCC")
+        self.assertEqual(sources[0]["A2"].fill.fgColor.rgb[-6:], "DDEBF7")
+        self.assertEqual(sources[1]["A2"].fill.fgColor.rgb[-6:], "DDEBF7")
         browser = browser_merge(paths, self.directory)
         self.assertEqual(browser["rows"], [list(row) for row in rows])
-        self.assertEqual(browser["fills"][str(zulu - 1)], "FCE4D6")
-        self.assertEqual(browser["fills"][str(zulu)], "F4CCCC")
+        self.assertEqual(browser["fills"][str(zulu - 1)], "C6EFCE")
+        self.assertEqual(browser["fills"][str(zulu)], "DDEBF7")
         self.assertEqual(browser["firstSheet"], "Merged Hotels")
 
     def test_conflicting_stars_are_not_selected_arbitrarily(self):

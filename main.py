@@ -18,9 +18,9 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 
-ORANGE = PatternFill("solid", fgColor="FCE4D6")
-PINK = PatternFill("solid", fgColor="F4CCCC")
-YELLOW = PatternFill("solid", fgColor="FFF2CC")
+GREEN = PatternFill("solid", fgColor="C6EFCE")
+BLUE = PatternFill("solid", fgColor="DDEBF7")
+RED = PatternFill("solid", fgColor="F4CCCC")
 HEADER = PatternFill("solid", fgColor="1F4E78")
 HEADER_FONT = Font(color="FFFFFF", bold=True)
 NAME_HEADERS = {"name", "hotel", "hotelname", "propertyname", "hotelnamemerged"}
@@ -408,10 +408,10 @@ def copy_source_sheet(
     destination.sheet_view.showGridLines = source_worksheet.sheet_view.showGridLines
     for row_number in duplicate_rows:
         for cell in destination[row_number]:
-            cell.fill = PINK
+            cell.fill = BLUE
     for row_number in candidate_rows - duplicate_rows:
         for cell in destination[row_number]:
-            cell.fill = YELLOW
+            cell.fill = RED
     return destination
 
 
@@ -549,10 +549,10 @@ def merge_workbooks(input_paths: list[Path], output_path: Path) -> dict[str, int
     for group in ordered_groups:
         group_records = [records[index] for index in group]
         duplicate = len(group_records) > 1
-        append_hotel(group_records, "MERGED - REVIEW" if duplicate else "SINGLE RECORD", ORANGE if duplicate else None)
+        append_hotel(group_records, "MERGED - REVIEW" if duplicate else "SINGLE RECORD", GREEN if duplicate else None)
         if duplicate:
             for record in group_records:
-                append_hotel([record], "SOURCE DUPLICATE", PINK)
+                append_hotel([record], "SOURCE DUPLICATE", BLUE)
     style_header(merged_sheet)
 
     review_sheet = output.create_sheet("Match Review")
@@ -584,7 +584,7 @@ def merge_workbooks(input_paths: list[Path], output_path: Path) -> dict[str, int
                 None,
             ]
         )
-        fill = ORANGE if link["status"] == "MERGED - REVIEW" else YELLOW
+        fill = GREEN if link["status"] == "MERGED - REVIEW" else RED
         for cell in review_sheet[review_sheet.max_row]:
             cell.fill = fill
     style_header(review_sheet)
@@ -625,8 +625,8 @@ def merge_workbooks(input_paths: list[Path], output_path: Path) -> dict[str, int
     instructions.append(["Hotel workbook merge - reviewer guide"])
     instructions.append(["Both original workbooks are copied to the Source tabs; source values are not removed."])
     instructions.append(["Merged Hotels is sorted by 3*, 4*, 5*, then other/unrated/conflicting categories; hotels are alphabetical within each category."])
-    instructions.append(["Orange rows combine a hotel's data and require manual checking. Pink original duplicate records sit directly below each orange row."])
-    instructions.append(["Yellow rows in Match Review are possible variants only. They are NOT automatically merged."])
+    instructions.append(["Green rows combine a hotel's data and require manual checking. Blue original duplicate records sit directly below each green row."])
+    instructions.append(["Red rows in Match Review are possible variants only. They are NOT automatically merged."])
     instructions.append(["Five email columns show distinct contacts, prioritizing Groups, Sales, Reservations and Events; ties keep source order. Extra emails remain on Source tabs."])
     instructions.append(["Location matching uses identical normalized addresses or coordinates within 30 m plus a similar name."])
     instructions.append(["Hotel stars and Google review ratings are separate. Conflicting star categories remain unclassified for review; conflicting values are listed in Review notes."])
