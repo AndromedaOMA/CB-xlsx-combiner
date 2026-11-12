@@ -76,6 +76,17 @@ Checks cover both merge engines, email selection, alphabetical category order,
 duplicate placement and colors, source preservation, ambiguous categories and
 location conflicts, including the supplied Athens files and Amsterdam reference.
 
+To check actual browser XLSX serialization, run with a local copy of the page's
+`xlsx-js-style@1.2.0/dist/xlsx.bundle.js` library (or install `xlsx-js-style@1.2.0`
+locally and omit the path):
+
+```powershell
+node tests/test_browser_export.cjs "path/to/xlsx.bundle.js"
+```
+
+This check covers empty source tabs, header-only sheets and an export/read-back
+cycle. Empty tabs are preserved without filters because they have no cell range.
+
 ## Use the static page
 
 Open `index.html` locally or deploy this folder to Vercel with the **Other**

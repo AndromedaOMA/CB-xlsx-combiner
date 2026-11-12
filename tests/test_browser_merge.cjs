@@ -34,6 +34,8 @@ const XLSX = {
       rows.forEach((row, r) => row.forEach((v, c) => {
         if (v !== null && v !== undefined) sheet[encodeCell({r, c})] = {v};
       }));
+      const columns = Math.max(0, ...rows.map(row => row.length));
+      if (columns) sheet["!ref"] = `${encodeCell({r: 0, c: 0})}:${encodeCell({r: rows.length - 1, c: columns - 1})}`;
       return sheet;
     },
     book_new: () => ({SheetNames: [], Sheets: {}}),

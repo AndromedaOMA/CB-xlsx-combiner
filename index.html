@@ -274,9 +274,12 @@
           }
         }
         worksheet["!freeze"] = { xSplit: 0, ySplit: 1 };
-        worksheet["!autofilter"] = { ref: XLSX.utils.encode_range({
-          s: { r: 0, c: 0 }, e: { r: Math.max(rows.length - 1, 0), c: columns - 1 }
-        }) };
+        // Empty source tabs have no cell range and cannot have an autofilter.
+        if (worksheet["!ref"]) {
+          worksheet["!autofilter"] = { ref: XLSX.utils.encode_range({
+            s: { r: 0, c: 0 }, e: { r: Math.max(rows.length - 1, 0), c: columns - 1 }
+          }) };
+        }
         worksheet["!cols"] = Array.from({ length: columns }, (_, column) => {
           const width = Math.max(12, ...rows.map(row => String(row[column] ?? "").length + 2));
           return { wch: Math.min(width, 55) };
@@ -539,6 +542,7 @@
         try {
           await createWorkbook();
         } catch (error) {
+          console.error("Workbook merge failed:", error);
           status.classList.add("error");
           status.textContent = error instanceof Error ? error.message : String(error);
         } finally {
