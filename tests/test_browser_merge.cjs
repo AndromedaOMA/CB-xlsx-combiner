@@ -48,10 +48,27 @@ vm.runInNewContext(script, {document: {querySelector: selector => elements.get(s
   await elements.get("#merge").click();
   assert.ok(output, elements.get("#status").textContent);
   const sheet = output.Sheets["Merged Hotels"];
-  const fills = {};
-  sheet.rows.forEach((_, r) => {
-    const color = sheet[encodeCell({r, c: 0})]?.s?.fill?.fgColor?.rgb;
-    if (color) fills[r] = color;
+  assert.deepEqual(Array.from(sheet.rows[0]), [
+    "Hotel name", "Google rating", "Email 1", "Email 2", "Email 3", "Email 4", "Email 5"
+  ]);
+  assert.equal(sheet["!autofilter"].ref, `A1:G${sheet.rows.length}`);
+  assert.equal(sheet["!freeze"].ySplit, 1);
+  sheet.rows.slice(1).forEach((row, index) => {
+    const r = index + 1;
+    assert.equal(row.length, 7);
+    assert.equal(sheet[encodeCell({r, c: 7})], undefined);
+    if (row[1] !== null) assert.equal(sheet[encodeCell({r, c: 1})].z, "0.0");
+    const fill = sheet[encodeCell({r, c: 0})]?.s?.fill?.fgColor?.rgb;
+    if (fill) for (let c = 0; c < 7; c++)
+      assert.equal(sheet[encodeCell({r, c})]?.s?.fill?.fgColor?.rgb, fill);
+    for (let c = 2; c < 7; c++) assert.notEqual(sheet[encodeCell({r, c})]?.z, "0.0");
   });
-  process.stdout.write(JSON.stringify({rows: sheet.rows, fills, firstSheet: output.SheetNames[0]}));
+  const rowFills = worksheet => Object.fromEntries(worksheet.rows.flatMap((_, r) => {
+    const color = worksheet[encodeCell({r, c: 0})]?.s?.fill?.fgColor?.rgb;
+    return color ? [[r, color]] : [];
+  }));
+  process.stdout.write(JSON.stringify({
+    rows: sheet.rows, fills: rowFills(sheet), firstSheet: output.SheetNames[0],
+    reviewFills: rowFills(output.Sheets["Match Review"])
+  }));
 })().catch(error => { console.error(error); process.exitCode = 1; });

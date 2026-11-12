@@ -25,8 +25,7 @@ HEADER = PatternFill("solid", fgColor="1F4E78")
 HEADER_FONT = Font(color="FFFFFF", bold=True)
 NAME_HEADERS = {"name", "hotel", "hotelname", "propertyname", "hotelnamemerged"}
 HOTEL_COLUMNS = [
-    "Hotel name", "Stars", "Google rating", "Email 1", "Email 2", "Email 3",
-    "Email 4", "Email 5", "Address", "Phone number", "Website",
+    "Hotel name", "Google rating", "Email 1", "Email 2", "Email 3", "Email 4", "Email 5",
 ]
 FIELD_ALIASES = {
     "Stars": {"stars", "star", "starcategory", "hotelstars", "starclassification",
@@ -510,49 +509,26 @@ def merge_workbooks(input_paths: list[Path], output_path: Path) -> dict[str, int
                 candidate_rows[key],
             )
 
-    extra_headers: dict[str, str] = {}
-    for record in records:
-        for field, value in record["fields"].items():
-            kind = field_kind(field)
-            if re.match(r"^(field|column)_", field) and record_emails({field: value}):
-                remainder = EMAIL_PATTERN.sub("", cell_text(value)).strip(" ;,|<>.\t\r\n")
-                if not remainder:
-                    continue  # Unlabelled contacts already belong in the five email columns.
-            if kind not in {"Hotel name", "Email", *FIELD_ALIASES} and cell_text(value):
-                extra_headers.setdefault(kind, field)
-
     merged_sheet = output.create_sheet("Merged Hotels", 0)
-    merged_sheet.append(HOTEL_COLUMNS + list(extra_headers.values()) + [
-        "Row type", "Source record count", "Source references", "Review notes",
-    ])
+    merged_sheet.append(HOTEL_COLUMNS)
 
-    def append_hotel(hotels: list[dict[str, Any]], row_type: str, fill: Any = None) -> None:
-        values, notes = hotel_values(hotels)
-        for kind, label in extra_headers.items():
-            alternatives = unique_values([
-                value for hotel in hotels for header, value in hotel["fields"].items()
-                if field_kind(header) == kind and cell_text(value)
-            ])
-            if len(alternatives) > 1:
-                notes.append(f"Conflicting {label}: " + " | ".join(map(str, alternatives)))
-            values.append(alternatives[0] if len(alternatives) == 1 else " | ".join(map(str, alternatives)) if alternatives else None)
-        if row_type == "MERGED - REVIEW":
-            notes.insert(0, "Check merged hotel and contact details before use")
-        merged_sheet.append(values + [row_type, len(hotels), " | ".join(reference(hotel) for hotel in hotels), "; ".join(notes)])
+    def append_hotel(hotels: list[dict[str, Any]], fill: Any = None) -> None:
+        values, _ = hotel_values(hotels)
+        # Keep stars internal for category sorting; export only names, ratings and emails.
+        merged_sheet.append([values[0], *values[2:8]])
         for cell in merged_sheet[merged_sheet.max_row]:
             cell.alignment = Alignment(vertical="top", wrap_text=True)
             if fill:
                 cell.fill = fill
-        merged_sheet.cell(merged_sheet.max_row, 3).number_format = "0.0"
-        merged_sheet.cell(merged_sheet.max_row, 10).number_format = "@"
+        merged_sheet.cell(merged_sheet.max_row, 2).number_format = "0.0"
 
     for group in ordered_groups:
         group_records = [records[index] for index in group]
         duplicate = len(group_records) > 1
-        append_hotel(group_records, "MERGED - REVIEW" if duplicate else "SINGLE RECORD", GREEN if duplicate else None)
+        append_hotel(group_records, GREEN if duplicate else None)
         if duplicate:
             for record in group_records:
-                append_hotel([record], "SOURCE DUPLICATE", BLUE)
+                append_hotel([record], BLUE)
     style_header(merged_sheet)
 
     review_sheet = output.create_sheet("Match Review")
@@ -624,14 +600,15 @@ def merge_workbooks(input_paths: list[Path], output_path: Path) -> dict[str, int
     instructions = output.create_sheet("Read Me")
     instructions.append(["Hotel workbook merge - reviewer guide"])
     instructions.append(["Both original workbooks are copied to the Source tabs; source values are not removed."])
+    instructions.append(["Merged Hotels contains only hotel name, Google rating and five email columns."])
     instructions.append(["Merged Hotels is sorted by 3*, 4*, 5*, then other/unrated/conflicting categories; hotels are alphabetical within each category."])
     instructions.append(["Green rows combine a hotel's data and require manual checking. Blue original duplicate records sit directly below each green row."])
     instructions.append(["Red rows in Match Review are possible variants only. They are NOT automatically merged."])
     instructions.append(["Five email columns show distinct contacts, prioritizing Groups, Sales, Reservations and Events; ties keep source order. Extra emails remain on Source tabs."])
     instructions.append(["Location matching uses identical normalized addresses or coordinates within 30 m plus a similar name."])
-    instructions.append(["Hotel stars and Google review ratings are separate. Conflicting star categories remain unclassified for review; conflicting values are listed in Review notes."])
+    instructions.append(["Star categories are used only for sorting, separately from Google ratings. Conflicting Google ratings appear together in the rating cell."])
     instructions.append(["Blank-name rows and category/header rows are retained in Source tabs; non-header unassigned rows are listed separately."])
-    instructions.append(["Contacts are taken from your files; their validity and whether they are verified must be checked manually. Filter Stars and Row type to select hotels."])
+    instructions.append(["Contacts are taken from your files; their validity and whether they are verified must be checked manually. Blue rows are supporting duplicate records."])
     instructions.append(["Input records processed", len(records)])
     instructions.append(["Merged groups", sum(len(group) > 1 for group in ordered_groups)])
     instructions.append(["Single records", sum(len(group) == 1 for group in ordered_groups)])

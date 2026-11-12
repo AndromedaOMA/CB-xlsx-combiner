@@ -12,6 +12,11 @@ import main
 
 
 ROOT = Path(__file__).resolve().parents[1]
+OUTPUT_HEADERS = ["Hotel name", "Google rating", "Email 1", "Email 2", "Email 3", "Email 4", "Email 5"]
+
+
+def fill_color(sheet, row, column=1):
+    return sheet.cell(row, column).fill.fgColor.rgb[-6:]
 
 
 def write_book(path, rows, title="Hotels"):
@@ -74,26 +79,28 @@ class MergeTests(unittest.TestCase):
         paths, book, summary = self.merge(left, right)
         sheet = book["Merged Hotels"]
         rows = list(sheet.values)
-        headers = list(rows[0])
-        status = headers.index("Row type")
-        primary = [row for row in rows[1:] if row[status] != "SOURCE DUPLICATE"]
+        self.assertEqual(list(rows[0]), OUTPUT_HEADERS)
+        self.assertEqual(sheet.max_column, 7)
+        self.assertEqual(sheet.auto_filter.ref, "A1:G8")
+        self.assertEqual(sheet.freeze_panes, "A2")
+        primary = [row for number, row in enumerate(rows[1:], 2) if fill_color(sheet, number) != "DDEBF7"]
         self.assertEqual([row[0] for row in primary], ["Alpha Hotel", "Beta Hotel", "Zulu Hotel", "Luxury Hotel", "Unknown Hotel"])
         self.assertEqual(summary["records"], 6)
         self.assertEqual(summary["merged_groups"], 1)
-        zulu = next(i for i, row in enumerate(rows, 1) if row[status] == "MERGED - REVIEW")
+        zulu = next(number for number in range(2, sheet.max_row + 1) if fill_color(sheet, number) == "C6EFCE")
         row = rows[zulu - 1]
-        self.assertEqual(row[:3], ("Zulu Hotel", "4*", 4.7))
-        self.assertEqual(row[3:8], ("SALES@zulu.test", "groups@zulu.test", "reservations@zulu.test", "events@zulu.test", "info@zulu.test"))
-        self.assertEqual(row[8:11], ("1 Main Street", "+31 123", "https://zulu.test"))
-        self.assertEqual(row[headers.index("Custom note")], "Keep me")
-        self.assertIn("2 additional email(s)", row[-1])
-        self.assertEqual(sheet.cell(zulu, 1).fill.fgColor.rgb[-6:], "C6EFCE")
+        self.assertEqual(row[:2], ("Zulu Hotel", 4.7))
+        self.assertEqual(row[2:], ("SALES@zulu.test", "groups@zulu.test", "reservations@zulu.test", "events@zulu.test", "info@zulu.test"))
+        self.assertEqual(sheet.cell(zulu, 2).number_format, "0.0")
+        self.assertEqual(sheet.cell(zulu, 2).data_type, "n")
+        self.assertTrue(all(fill_color(sheet, zulu, column) == "C6EFCE" for column in range(1, 8)))
         for number in [zulu + 1, zulu + 2]:
-            self.assertEqual(sheet.cell(number, status + 1).value, "SOURCE DUPLICATE")
-            self.assertEqual(sheet.cell(number, 8).fill.fgColor.rgb[-6:], "DDEBF7")
+            self.assertTrue(all(fill_color(sheet, number, column) == "DDEBF7" for column in range(1, 8)))
         sources = [book[name] for name in book.sheetnames if name.startswith("Source")]
         self.assertEqual(sources[0]["C2"].value, left[1][2])
         self.assertEqual(sources[1]["D2"].value, right[1][3])
+        self.assertEqual(sources[0]["F2"].value, "Keep me")
+        self.assertEqual(sources[1]["G2"].value, "https://zulu.test")
         self.assertEqual(sources[0]["A2"].fill.fgColor.rgb[-6:], "DDEBF7")
         self.assertEqual(sources[1]["A2"].fill.fgColor.rgb[-6:], "DDEBF7")
         browser = browser_merge(paths, self.directory)
@@ -108,9 +115,21 @@ class MergeTests(unittest.TestCase):
             [["hotel", "google_stars", "googlerating"], ["One Hotel", 4, 4.8]],
         )
         row = list(book["Merged Hotels"].values)[1]
-        self.assertEqual(row[1:3], ("Conflicting / review", 4.8))
-        self.assertIn("Conflicting stars: 3*, 4*", row[-1])
+        self.assertEqual(row[:2], ("One Hotel", 4.8))
+        records = [record for number, path in enumerate(paths, 1) for record in main.workbook_rows(path, number)]
+        values, notes = main.hotel_values(records)
+        self.assertEqual(values[1], "Conflicting / review")
+        self.assertIn("Conflicting stars: 3*, 4*", notes)
         self.assertEqual(browser_merge(paths, self.directory)["rows"][1], list(row))
+
+    def test_conflicting_google_ratings_remain_visible(self):
+        paths, book, _ = self.merge(
+            [["name", "Google rating", "email"], ["One Hotel", 4.6, "one@hotel.test"]],
+            [["name", "google_rating", "email"], ["One Hotel", "4,8", "two@hotel.test"]],
+        )
+        rows = list(book["Merged Hotels"].values)
+        self.assertEqual(rows[1][:4], ("One Hotel", "4.6 | 4.8", "one@hotel.test", "two@hotel.test"))
+        self.assertEqual(browser_merge(paths, self.directory)["rows"], [list(row) for row in rows])
 
     def test_location_conflict_cannot_be_bridged_by_an_empty_record(self):
         paths, book, summary = self.merge(
@@ -128,9 +147,9 @@ class MergeTests(unittest.TestCase):
             [["name", "google_stars", "email", "google_rating"], ["3 Stele Athens"], ["Section Hotel", None, None, 4.9], [None, None, "unassigned@test.example"]],
         )
         rows = list(book["Merged Hotels"].values)
-        self.assertEqual(rows[1][:3], ("Section Hotel", "3*", 4.9))
+        self.assertEqual(rows[1][:2], ("Section Hotel", 4.9))
         self.assertNotIn("field_4", rows[0])
-        self.assertEqual(rows[2][3:6], ("groups@test.example", "one@test.example", "two@test.example"))
+        self.assertEqual(rows[2][2:5], ("groups@test.example", "one@test.example", "two@test.example"))
         self.assertTrue(any("unassigned@test.example" in str(row) for row in book["Unassigned Rows"].values))
         self.assertEqual(browser_merge(paths, self.directory)["rows"], [list(row) for row in rows])
 
@@ -141,25 +160,35 @@ class MergeTests(unittest.TestCase):
         )
         self.assertEqual(summary["merged_groups"], 0)
         self.assertEqual(summary["single_records"], 4)
-        self.assertEqual(browser_merge(paths, self.directory)["rows"], [list(row) for row in book["Merged Hotels"].values])
+        browser = browser_merge(paths, self.directory)
+        self.assertEqual(browser["rows"], [list(row) for row in book["Merged Hotels"].values])
+        review = book["Match Review"]
+        self.assertGreater(review.max_row, 1)
+        self.assertTrue(all(fill_color(review, row) == "F4CCCC" for row in range(2, review.max_row + 1)))
+        self.assertTrue(all(color == "F4CCCC" for row, color in browser["reviewFills"].items() if row != "0"))
+        sources = [book[name] for name in book.sheetnames if name.startswith("Source")]
+        self.assertTrue(all(fill_color(sheet, 3) == "F4CCCC" for sheet in sources))
 
-    def test_real_workbooks_preserve_every_record_and_keep_blocks_sorted(self):
+    def test_real_workbooks_preserve_every_record_and_duplicate_blocks(self):
         paths = [ROOT / "Athens.xlsx", ROOT / "Athens (1).xlsx"]
         output = self.directory / "athens-review.xlsx"
         summary = main.merge_workbooks(paths, output)
         self.assertEqual(summary["records"], 338)
         book = load_workbook(output)
         self.addCleanup(book.close)
-        rows = list(book["Merged Hotels"].values)
-        headers = list(rows[0])
-        status, count = headers.index("Row type"), headers.index("Source record count")
-        primary = [row for row in rows[1:] if row[status] != "SOURCE DUPLICATE"]
-        self.assertEqual(sum(row[count] for row in primary), summary["records"])
-        order = lambda row: ({"3*": 0, "4*": 1, "5*": 2}.get(row[1], 3), main.normalized(row[0]))
-        self.assertEqual(primary, sorted(primary, key=order))
-        for i, row in enumerate(rows):
-            if row[status] == "MERGED - REVIEW":
-                self.assertTrue(all(original[status] == "SOURCE DUPLICATE" for original in rows[i + 1:i + 1 + row[count]]))
+        sheet = book["Merged Hotels"]
+        rows = list(sheet.values)
+        self.assertEqual(list(rows[0]), OUTPUT_HEADERS)
+        self.assertEqual(sheet.max_column, 7)
+        colors = [fill_color(sheet, number) for number in range(2, sheet.max_row + 1)]
+        self.assertEqual(len(colors) - colors.count("C6EFCE"), summary["records"])
+        self.assertEqual(colors.count("C6EFCE"), summary["merged_groups"])
+        self.assertEqual(len(colors) - colors.count("DDEBF7"), summary["merged_groups"] + summary["single_records"])
+        for index, color in enumerate(colors):
+            if color == "C6EFCE":
+                self.assertEqual(colors[index + 1:index + 3], ["DDEBF7", "DDEBF7"])
+            elif color == "DDEBF7":
+                self.assertIn(colors[index - 1], {"C6EFCE", "DDEBF7"})
         browser = browser_merge(paths, self.directory)
         self.assertEqual(len(browser["rows"]), len(rows))
         self.assertEqual(browser["rows"][0], list(rows[0]))

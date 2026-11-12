@@ -7,11 +7,10 @@ to select hotels. The browser interface and static Vercel deployment are unchang
 
 1. **Select a category.** Hotels appear in 3*, 4*, then 5* order, alphabetically
    within each category. Other, unrated and conflicting categories follow, so
-   no source records are discarded. Filter **Stars** for the client's budget.
-2. **Read one hotel row.** The first columns are hotel name, stars, Google
-   rating, five separate emails, address, phone number and website. Matching
-   fields from both files are combined into these columns. Other populated
-   source fields follow once each, rather than repeating columns for each file.
+   no source records are discarded. Stars are used internally for sorting.
+2. **Read one hotel row.** The merged list contains only **Hotel name**,
+   **Google rating**, and **Email 1** through **Email 5**. Matching fields from
+   both files are combined into these columns. Other details remain on Source tabs.
 3. **Check green rows.** A green row combines duplicate records. Its original
    records appear directly below in blue, in the same column layout. All raw
    values also remain on the Source tabs, including emails beyond the first five.
@@ -20,10 +19,9 @@ to select hotels. The browser interface and static Vercel deployment are unchang
    priorities keep their original file/row/column order. Personal and general
    contacts follow, then no-reply/newsletter addresses. This does not verify an
    address or identify which contacts previously supplied an offer.
-5. **Review before using.** Check **Review notes** for conflicting fields or
-   extra emails. Differing star classifications stay **Conflicting / review**.
-   Filter **Row type** to `MERGED - REVIEW` and `SINGLE RECORD` when selecting
-   hotels after checking them; blue rows are supporting records.
+5. **Review before using.** Conflicting Google ratings appear together in the
+   rating cell. Check the Source tabs for other details and extra emails, and
+   Match Review for possible matches. Blue rows are supporting duplicate records.
 
 Hotel stars (including `google_stars` and `Stele_Booking`) are separate from the
 Google review score (`google_rating`). A category heading such as `3 Stele Athens`
