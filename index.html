@@ -53,7 +53,7 @@
     <section class="card" aria-labelledby="page-title">
       <div class="eyebrow">Private, browser-based tool</div>
       <h1 id="page-title">Hotel workbook merger</h1>
-      <p class="intro">Choose two .xlsx files to merge hotel names, Google ratings, and emails, with color-coded duplicates and the original sheets for review.</p>
+      <p class="intro">Choose two .xlsx files to merge hotel names, Google hotel stars, and emails, with color-coded duplicates and the original sheets for review.</p>
 
       <div class="files">
         <label for="file-a">First hotel workbook
@@ -91,11 +91,11 @@
       };
       const nameHeaders = new Set(["name", "hotel", "hotelname", "propertyname", "hotelnamemerged"]);
       const hotelColumns = [
-        "Hotel name", "Google rating", "Email 1", "Email 2", "Email 3", "Email 4", "Email 5"
+        "Hotel name", "Google (hotel) stars", "Email 1", "Email 2", "Email 3", "Email 4", "Email 5"
       ];
       const fieldAliases = {
         "Stars": ["stars", "star", "starcategory", "hotelstars", "starclassification", "hotelclass",
-          "hotelcategory", "category", "rating", "hotelrating", "googlestars", "stelebooking", "bookingstars"],
+          "hotelcategory", "category", "rating", "hotelrating", "googlestars", "googlehotelstars", "stelebooking", "bookingstars"],
         "Google rating": ["googlerating", "googlescore", "googlereviewrating", "googlereviews", "googlereviewscore"],
         "Address": ["address", "hoteladdress", "streetaddress"],
         "Phone number": ["phone", "phonenumber", "telephone", "tel", "hotelphone"],
@@ -270,7 +270,6 @@
             const cell = worksheet[XLSX.utils.encode_cell({ r: rowNumber, c: column })];
             if (cell) {
               cell.s = { ...cell.s, alignment: { wrapText: true, vertical: "top" } };
-              if (column === 1) cell.z = "0.0";
             }
           }
         }
@@ -456,8 +455,7 @@
         function appendHotel(hotels, fill) {
           const { values } = hotelValues(hotels);
           if (fill) mergedFillRows.set(mergedRows.length, fill);
-          // Keep stars internal for category sorting; export only names, ratings and emails.
-          mergedRows.push([values[0], ...values.slice(2, 8)]);
+          mergedRows.push([...values.slice(0, 2), ...values.slice(3, 8)]);
         }
         for (const group of orderedGroups) {
           const groupRecords = group.map(index => records[index]);
@@ -502,13 +500,13 @@
         const readme = [
           ["Hotel workbook merge - reviewer guide"],
           ["Original workbook sheets are copied to Source tabs; source values are not removed."],
-          ["Merged Hotels contains only hotel name, Google rating and five email columns."],
+          ["Merged Hotels contains only hotel name, Google (hotel) stars and five email columns."],
           ["Merged Hotels is sorted by 3*, 4*, 5*, then other/unrated/conflicting categories; hotels are alphabetical within each category."],
           ["Green rows combine a hotel's data and require manual checking. Blue original duplicate records sit directly below each green row."],
           ["Red rows in Match Review are possible variants only. They are NOT automatically merged."],
           ["Five email columns show distinct contacts, prioritizing Groups, Sales, Reservations and Events; ties keep source order. Extra emails remain on Source tabs."],
           ["Location matching uses identical normalized addresses or coordinates within 30 m plus a similar name."],
-          ["Star categories are used only for sorting, separately from Google ratings. Conflicting Google ratings appear together in the rating cell."],
+          ["Hotel stars use source star fields and category headings. Conflicting or missing classifications are marked for review. Google review scores are not used."],
           ["Blank-name rows and category/header rows are retained in Source tabs; non-header unassigned rows are listed separately."],
           ["Contacts are taken from your files; their validity and whether they are verified must be checked manually. Blue rows are supporting duplicate records."],
           ["Input records processed", records.length],

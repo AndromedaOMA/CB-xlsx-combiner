@@ -7,9 +7,9 @@ to select hotels. The browser interface and static Vercel deployment are unchang
 
 1. **Select a category.** Hotels appear in 3*, 4*, then 5* order, alphabetically
    within each category. Other, unrated and conflicting categories follow, so
-   no source records are discarded. Stars are used internally for sorting.
+   no source records are discarded. The hotel-star classification controls sorting.
 2. **Read one hotel row.** The merged list contains only **Hotel name**,
-   **Google rating**, and **Email 1** through **Email 5**. Matching fields from
+   **Google (hotel) stars**, and **Email 1** through **Email 5**. Matching fields from
    both files are combined into these columns. Other details remain on Source tabs.
 3. **Check green rows.** A green row combines duplicate records. Its original
    records appear directly below in blue, in the same column layout. All raw
@@ -19,13 +19,15 @@ to select hotels. The browser interface and static Vercel deployment are unchang
    priorities keep their original file/row/column order. Personal and general
    contacts follow, then no-reply/newsletter addresses. This does not verify an
    address or identify which contacts previously supplied an offer.
-5. **Review before using.** Conflicting Google ratings appear together in the
-   rating cell. Check the Source tabs for other details and extra emails, and
-   Match Review for possible matches. Blue rows are supporting duplicate records.
+5. **Review before using.** Differing star classifications show **Conflicting / review**;
+   missing classifications show **Unrated / review**. Check the Source tabs for
+   other details and extra emails, and Match Review for possible matches.
+   Blue rows are supporting duplicate records.
 
-Hotel stars (including `google_stars` and `Stele_Booking`) are separate from the
-Google review score (`google_rating`). A category heading such as `3 Stele Athens`
-supplies stars only when a row has no usable star classification. Unknown stars
+The **Google (hotel) stars** column shows hotel classifications such as `3*`, `4*`
+and `5*`, combining `google_stars` and other hotel-star fields such as `Stele_Booking`.
+A category heading such as `3 Stele Athens` supplies stars only when a row has no
+usable star classification. Unknown stars
 are never inferred from the Google review score.
 
 ## Create a review workbook locally

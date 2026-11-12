@@ -49,7 +49,7 @@ vm.runInNewContext(script, {document: {querySelector: selector => elements.get(s
   assert.ok(output, elements.get("#status").textContent);
   const sheet = output.Sheets["Merged Hotels"];
   assert.deepEqual(Array.from(sheet.rows[0]), [
-    "Hotel name", "Google rating", "Email 1", "Email 2", "Email 3", "Email 4", "Email 5"
+    "Hotel name", "Google (hotel) stars", "Email 1", "Email 2", "Email 3", "Email 4", "Email 5"
   ]);
   assert.equal(sheet["!autofilter"].ref, `A1:G${sheet.rows.length}`);
   assert.equal(sheet["!freeze"].ySplit, 1);
@@ -57,7 +57,8 @@ vm.runInNewContext(script, {document: {querySelector: selector => elements.get(s
     const r = index + 1;
     assert.equal(row.length, 7);
     assert.equal(sheet[encodeCell({r, c: 7})], undefined);
-    if (row[1] !== null) assert.equal(sheet[encodeCell({r, c: 1})].z, "0.0");
+    assert.match(row[1], /^(?:[1-5]\*|Conflicting \/ review|Unrated \/ review)$/);
+    assert.notEqual(sheet[encodeCell({r, c: 1})].z, "0.0");
     const fill = sheet[encodeCell({r, c: 0})]?.s?.fill?.fgColor?.rgb;
     if (fill) for (let c = 0; c < 7; c++)
       assert.equal(sheet[encodeCell({r, c})]?.s?.fill?.fgColor?.rgb, fill);

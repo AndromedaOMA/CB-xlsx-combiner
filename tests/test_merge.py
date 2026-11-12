@@ -12,7 +12,7 @@ import main
 
 
 ROOT = Path(__file__).resolve().parents[1]
-OUTPUT_HEADERS = ["Hotel name", "Google rating", "Email 1", "Email 2", "Email 3", "Email 4", "Email 5"]
+OUTPUT_HEADERS = ["Hotel name", "Google (hotel) stars", "Email 1", "Email 2", "Email 3", "Email 4", "Email 5"]
 
 
 def fill_color(sheet, row, column=1):
@@ -89,10 +89,10 @@ class MergeTests(unittest.TestCase):
         self.assertEqual(summary["merged_groups"], 1)
         zulu = next(number for number in range(2, sheet.max_row + 1) if fill_color(sheet, number) == "C6EFCE")
         row = rows[zulu - 1]
-        self.assertEqual(row[:2], ("Zulu Hotel", 4.7))
+        self.assertEqual(row[:2], ("Zulu Hotel", "4*"))
         self.assertEqual(row[2:], ("SALES@zulu.test", "groups@zulu.test", "reservations@zulu.test", "events@zulu.test", "info@zulu.test"))
-        self.assertEqual(sheet.cell(zulu, 2).number_format, "0.0")
-        self.assertEqual(sheet.cell(zulu, 2).data_type, "n")
+        self.assertEqual(sheet.cell(zulu, 2).number_format, "General")
+        self.assertEqual(sheet.cell(zulu, 2).data_type, "s")
         self.assertTrue(all(fill_color(sheet, zulu, column) == "C6EFCE" for column in range(1, 8)))
         for number in [zulu + 1, zulu + 2]:
             self.assertTrue(all(fill_color(sheet, number, column) == "DDEBF7" for column in range(1, 8)))
@@ -115,20 +115,29 @@ class MergeTests(unittest.TestCase):
             [["hotel", "google_stars", "googlerating"], ["One Hotel", 4, 4.8]],
         )
         row = list(book["Merged Hotels"].values)[1]
-        self.assertEqual(row[:2], ("One Hotel", 4.8))
+        self.assertEqual(row[:2], ("One Hotel", "Conflicting / review"))
         records = [record for number, path in enumerate(paths, 1) for record in main.workbook_rows(path, number)]
         values, notes = main.hotel_values(records)
         self.assertEqual(values[1], "Conflicting / review")
         self.assertIn("Conflicting stars: 3*, 4*", notes)
         self.assertEqual(browser_merge(paths, self.directory)["rows"][1], list(row))
 
-    def test_conflicting_google_ratings_remain_visible(self):
+    def test_google_review_scores_are_not_used_as_hotel_stars(self):
         paths, book, _ = self.merge(
             [["name", "Google rating", "email"], ["One Hotel", 4.6, "one@hotel.test"]],
             [["name", "google_rating", "email"], ["One Hotel", "4,8", "two@hotel.test"]],
         )
         rows = list(book["Merged Hotels"].values)
-        self.assertEqual(rows[1][:4], ("One Hotel", "4.6 | 4.8", "one@hotel.test", "two@hotel.test"))
+        self.assertEqual(rows[1][:4], ("One Hotel", "Unrated / review", "one@hotel.test", "two@hotel.test"))
+        self.assertEqual(browser_merge(paths, self.directory)["rows"], [list(row) for row in rows])
+
+    def test_exported_star_header_is_recognized_on_input(self):
+        paths, book, _ = self.merge(
+            [["Hotel name", "Google (hotel) stars", "Email 1"], ["One Hotel", "5*", "one@hotel.test"]],
+            [["name", "google_stars", "google_rating"], ["One Hotel", 5, 4.2]],
+        )
+        rows = list(book["Merged Hotels"].values)
+        self.assertEqual(rows[1][:3], ("One Hotel", "5*", "one@hotel.test"))
         self.assertEqual(browser_merge(paths, self.directory)["rows"], [list(row) for row in rows])
 
     def test_location_conflict_cannot_be_bridged_by_an_empty_record(self):
@@ -147,7 +156,7 @@ class MergeTests(unittest.TestCase):
             [["name", "google_stars", "email", "google_rating"], ["3 Stele Athens"], ["Section Hotel", None, None, 4.9], [None, None, "unassigned@test.example"]],
         )
         rows = list(book["Merged Hotels"].values)
-        self.assertEqual(rows[1][:2], ("Section Hotel", 4.9))
+        self.assertEqual(rows[1][:2], ("Section Hotel", "3*"))
         self.assertNotIn("field_4", rows[0])
         self.assertEqual(rows[2][2:5], ("groups@test.example", "one@test.example", "two@test.example"))
         self.assertTrue(any("unassigned@test.example" in str(row) for row in book["Unassigned Rows"].values))
